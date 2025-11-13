@@ -30,8 +30,8 @@
   const totalPuntosEl   = $('totalPuntos');
 
   // ===== Políticas =====
-  const VENCE_DIAS = 180; // ~6 meses
-  const DAY_LIMIT  = 2;   // máx tickets/día
+  const VENCE_DIAS = 180; // días de vigencia (aprox. 6 meses)
+  const DAY_LIMIT  = 2;   // tickets por día
 
   // ===== Estado =====
   let isLogged = false;
@@ -61,13 +61,26 @@
     Tacos: ["Tacos de sirloin"],
     Ensalada:["Ensalada col ribs","buffalo salad",""]
   };
+
   const POINT_RANGES = {
     burgers:[7,15], costillas:[7,15], cortes:[7,15], pescado:[6,14], pollo:[6,13], pastas:[6,13], texmex:[6,14],
     alitas:[4,10], entradas:[3,9], ensaladas:[3,9], sopas:[3,8], postres:[4,10], cocteles:[4,10],
     alcohol:[3,9], bebidas:[2,7], calientes:[2,6], other:[1,5]
   };
-  const hashInt = (s)=>{ let h=2166136261>>>0; for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619);} return h>>>0; };
-  const seededRandInt = (seed,min,max)=>{ const r=(hashInt(String(seed))%10000)/10000; return Math.floor(min + r*(max-min+1)); };
+
+  const hashInt = (s)=>{
+    let h=2166136261>>>0;
+    for(let i=0;i<s.length;i++){
+      h^=s.charCodeAt(i);
+      h=Math.imul(h,16777619);
+    }
+    return h>>>0;
+  };
+  const seededRandInt = (seed,min,max)=>{
+    const r=(hashInt(String(seed))%10000)/10000;
+    return Math.floor(min + r*(max-min+1));
+  };
+
   function detectCategory(name){
     const n = String(name||'').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
     for (const k of ["burgers","costillas","cortes","pescado","pollo","pastas","texmex","alitas","entradas","ensaladas","sopas","postres","cocteles","alcohol","bebidas","calientes"]) {
@@ -75,6 +88,7 @@
     }
     return "other";
   }
+
   function assignPointsForProduct(name, price){
     let cat = detectCategory(name);
     let [minP,maxP] = POINT_RANGES[cat] || POINT_RANGES.other;
@@ -88,16 +102,23 @@
     return seededRandInt(seed,minP,maxP);
   }
 
-  // ===== Helpers =====
+  // ===== Helpers UI =====
   function setStatus(msg, type='') {
     if (!ocrStatus) return;
     ocrStatus.className = 'validacion-msg';
     if (type) ocrStatus.classList.add(type); // ok | err
     ocrStatus.textContent = msg || '';
   }
+
   function disableAllEdits() {
-    [iNum,iFecha,iTotal].forEach(x=>{ if(x){ x.readOnly = true; x.disabled = true; }});
+    [iNum,iFecha,iTotal].forEach(x=>{
+      if(x){
+        x.readOnly = true;
+        x.disabled = true;
+      }
+    });
   }
+
   function setPreview(file) {
     if (currentPreviewURL) URL.revokeObjectURL(currentPreviewURL);
     const url = URL.createObjectURL(file);
@@ -111,6 +132,7 @@
       dropzone.appendChild(img);
     }
   }
+
   function dataURLtoBlob(dataURL) {
     const [meta, b64] = dataURL.split(',');
     const mime = meta.split(':')[1].split(';')[0];
@@ -120,6 +142,7 @@
     for (let i=0;i<bin.length;i++) ia[i] = bin.charCodeAt(i);
     return new Blob([ab], { type: mime });
   }
+
   function setFileInputFromBlob(blob, name='ticket.jpg') {
     const file = new File([blob], name, { type: blob.type||'image/jpeg', lastModified: Date.now() });
     const dt = new DataTransfer();
@@ -142,7 +165,7 @@
       .replace(/\r/g,'')
       .trim();
 
-    // Normaliza confusiones comunes de OCR en contexto mixto
+    // Normaliza confusiones comunes de OCR
     t = t
       .replace(/\bI(\d{4})\b/g,'1$1')
       .replace(/\b(\d{2})O(\d{2})\b/g,'$1 0 $2')
@@ -174,15 +197,15 @@
   }
 
   // =========================
-  //  PARSER PRECISO DE TICKET
+  //  PARSER PRECISO DE TICKET (local)
   // =========================
   function parseTicketFromText(raw){
-    const rxMoney   = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/;
-    const rxMoneyG  = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/g;
-    const rxDate    = /\b(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})\b/; // dd/mm/aaaa
-    const rxHour    = /\b\d{1,2}:\d{2}\s?(?:AM|PM)?\b/i;
+    const rxMoney  = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/;   // sin global
+    const rxMoneyG = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/g;  // global solo para matchAll
+    const rxDate   = /\b(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})\b/; // dd/mm/aaaa
+    const rxHour   = /\b\d{1,2}:\d{2}\s?(?:AM|PM)?\b/i;
 
-    const text  = cleanOCR(raw);
+    const text = cleanOCR(raw);
     const lines = text.split('\n').map(s=>s.trim()).filter(Boolean);
 
     // --- FECHA: primera dd/mm/aaaa válida ---
@@ -195,7 +218,6 @@
         let mm = parseInt(mo, 10);
         let yy = parseInt(y, 10);
 
-        // año 2 dígitos -> 20xx/19xx
         if (y.length === 2) {
           yy = (yy < 50) ? 2000 + yy : 1900 + yy;
         }
@@ -206,7 +228,6 @@
           fechaISO = `${yy}-${mmStr}-${ddStr}`;
           break;
         }
-        // si dd/mm no son válidos, se ignora y se sigue buscando
       }
     }
 
@@ -231,7 +252,8 @@
       if (/^total\b/i.test(lines[i]) || /impt\.?total/i.test(lines[i])){
         const m = lines[i].match(rxMoney) || (lines[i+1]?.match(rxMoney));
         if (m){
-          total = parseFloat(m[1].replace(/\./g,'').replace(',','.'));
+          const numStr = m[1] || m[0];
+          total = parseFloat(numStr.replace(/\./g,'').replace(',','.'));
           break;
         }
       }
@@ -240,19 +262,19 @@
       // fallback: "Efectivo" o último importe del ticket
       for (let i=lines.length-1; i>=0; i--){
         if (/efectivo/i.test(lines[i]) && rxMoney.test(lines[i])){
-          total = parseFloat(lines[i].match(rxMoney)[1].replace(/\./g,'').replace(',','.'));
-          break;
+          const mm = lines[i].match(rxMoney);
+          if (mm){
+            const numStr = mm[1] || mm[0];
+            total = parseFloat(numStr.replace(/\./g,'').replace(',','.'));
+            break;
+          }
         }
       }
       if (total==null){
-        const all = [];
-        let m;
-        while ((m = rxMoneyG.exec(text)) !== null) {
-          all.push(m[1]);
-        }
+        const all = [...text.matchAll(rxMoneyG)].map(m=>m[1]);
         if (all.length){
-          const last = all[all.length-1];
-          total = parseFloat(last.replace(/\./g,'').replace(',','.'));
+          const numStr = all[all.length-1];
+          total = parseFloat(numStr.replace(/\./g,'').replace(',','.'));
         }
       }
     }
@@ -262,31 +284,31 @@
     const stopIdx = lines.findIndex(l => /sub[\s-]?total/i.test(l));
     let firstItemIdx = -1;
     for (let i=0;i<lines.length;i++){
-      if (/(mesero|mesa|clientes?|reimpresion|fecha|hora|total|iva|impuesto|cuenta|efectivo|cambio|cp|regimen)/i.test(lines[i])) {
-        continue;
-      }
-      if (rxMoney.test(lines[i]) || (lines[i+1] && rxMoney.test(lines[i+1]))){
-        firstItemIdx = i; break;
+      if (!/(mesero|mesa|clientes?|reimpresion|fecha|hora|total|iva|impuesto|cuenta|efectivo|cambio|cp|regimen)/i.test(lines[i])){
+        if (rxMoney.test(lines[i]) || (lines[i+1] && rxMoney.test(lines[i+1]))){
+          firstItemIdx = i; break;
+        }
       }
     }
 
     const products = [];
     if (firstItemIdx>=0){
-      const end = stopIdx>firstItemIdx ? stopIdx : Math.min(lines.length, firstItemIdx+20);
+      const end = stopIdx>firstItemIdx ? stopIdx : Math.min(lines.length, firstItemIdx+25);
       for (let i=firstItemIdx; i<end; i++){
         let name = lines[i];
+        if (!name) continue;
 
         // saltar líneas claramente administrativas
         if (/(mesero|mesa|clientes?|reimpresion|fecha|hora|regimen fiscal)/i.test(name)) {
           continue;
         }
-
-        if (!name || proms.test(name)) continue;
+        if (proms.test(name)) continue;
 
         // mismo renglón: "Nombre .... 229.00"
         let m = name.match(rxMoney);
         if (m){
-          const price = parseFloat(m[1].replace(/\./g,'').replace(',','.'));
+          const numStr = m[1] || m[0];
+          const price = parseFloat(numStr.replace(/\./g,'').replace(',','.'));
           name = name.replace(rxMoney,'').replace(/[.\-]+$/,'').trim();
           name = fixProductName(name);
           if (name && !proms.test(name)) products.push({ name, qty:1, price });
@@ -295,14 +317,18 @@
 
         // siguiente renglón tiene el precio
         if (i+1 < end && rxMoney.test(lines[i+1]) && !proms.test(lines[i+1])){
-          const price = parseFloat(lines[i+1].match(rxMoney)[1].replace(/\./g,'').replace(',','.'));
-          name = fixProductName(name.replace(/[.\-]+$/,'').trim());
-          if (name) products.push({ name, qty:1, price });
-          i++;
-          continue;
+          const mm = lines[i+1].match(rxMoney);
+          if (mm){
+            const numStr = mm[1] || mm[0];
+            const price = parseFloat(numStr.replace(/\./g,'').replace(',','.'));
+            name = fixProductName(name.replace(/[.\-]+$/,'').trim());
+            if (name) products.push({ name, qty:1, price });
+            i++;
+            continue;
+          }
         }
 
-        // sin precio, igual lo tomamos
+        // sin precio, igual lo tomamos (qty=1, price=null)
         name = fixProductName(name);
         if (name && !proms.test(name)) products.push({ name, qty:1 });
       }
@@ -311,13 +337,15 @@
     return { folio, fechaISO, total, productos: products };
   }
 
-  function applyParsedFields(parsed){
+  function applyParsedFields(parsed, fallbackItems){
     if (!parsed) return;
 
+    // Folio: 5 dígitos
     if (parsed.folio && /^\d{5}$/.test(parsed.folio) && iNum){
       iNum.value = parsed.folio;
     }
 
+    // Fecha válida YYYY-MM-DD y día != 00
     if (parsed.fechaISO && /^\d{4}-\d{2}-\d{2}$/.test(parsed.fechaISO) && iFecha){
       const parts = parsed.fechaISO.split('-');
       const dNum = parseInt(parts[2], 10);
@@ -328,10 +356,16 @@
 
     if (typeof parsed.total === 'number' && !Number.isNaN(parsed.total) && iTotal){
       iTotal.value = parsed.total.toFixed(2);
+      iTotal.disabled = false;
     }
 
-    if (Array.isArray(parsed.productos)){
-      const evt = new CustomEvent('ocr:productos', { detail: parsed.productos });
+    let prods = Array.isArray(parsed.productos) ? parsed.productos : [];
+    if (!prods.length && Array.isArray(fallbackItems) && fallbackItems.length){
+      prods = fallbackItems;
+    }
+
+    if (prods.length){
+      const evt = new CustomEvent('ocr:productos', { detail: prods });
       document.dispatchEvent(evt);
     }
   }
@@ -363,24 +397,16 @@
       const rawText = ret?.text || ret?.rawText || ret?.ocrText;
       if (rawText){
         const parsed = parseTicketFromText(rawText);
-        applyParsedFields(parsed);
+        applyParsedFields(parsed, ret?.items);
         setStatus("✅ Datos detectados automáticamente","ok");
+      } else {
+        setStatus("No se pudo leer el ticket. Intenta otra foto.","err");
       }
     } catch (e) {
       console.error("[autoProcess] Error al procesar:", e);
       setStatus("Falló el OCR. Intenta de nuevo.", "err");
     }
   }
-
-  // También aceptamos eventos crudos desde ocr.js:
-  // document.dispatchEvent(new CustomEvent('ocr:text', { detail: { text } }))
-  document.addEventListener('ocr:text', (ev)=>{
-    const raw = ev?.detail?.text || ev?.detail;
-    if (!raw) return;
-    const parsed = parseTicketFromText(raw);
-    applyParsedFields(parsed);
-    setStatus("✅ Datos detectados automáticamente","ok");
-  });
 
   // ===== Cámara =====
   async function openCamera() {
@@ -410,10 +436,12 @@
       setStatus(msg,"err"); fileInput?.click();
     }
   }
+
   function stopCamera(){
     if (liveStream){ liveStream.getTracks().forEach(t=>t.stop()); liveStream=null; }
     modal.style.display='none'; modal.setAttribute('aria-hidden','true');
   }
+
   async function captureFrame(){
     const w=video.videoWidth, h=video.videoHeight;
     if (!w||!h){ setStatus("Cámara aún no lista. Intenta de nuevo.","err"); return; }
@@ -428,6 +456,7 @@
     setStatus("📎 Foto capturada. Procesando OCR…","ok");
     await autoProcessCurrentFile(); // AUTO
   }
+
   btnCam?.addEventListener('click', openCamera);
   btnClose?.addEventListener('click', stopCamera);
   btnShot?.addEventListener('click', captureFrame);
@@ -465,17 +494,21 @@
 
   // ===== Productos (solo lectura) =====
   function upsertProducto(nombre, cantidad=1, price=null){
-    nombre=String(nombre||'').trim(); if(!nombre) return;
+    nombre=String(nombre||'').trim();
+    if(!nombre) return;
     const pointsUnit = assignPointsForProduct(nombre, typeof price==='number'?price:null);
     const idx = productos.findIndex(p=>p.name.toLowerCase()===nombre.toLowerCase());
     if (idx>=0){
       productos[idx].qty += cantidad;
-      if (typeof price==='number'){ productos[idx].price = +((productos[idx].price||0)+price).toFixed(2); }
+      if (typeof price==='number'){
+        productos[idx].price = +((productos[idx].price||0)+price).toFixed(2);
+      }
     } else {
       productos.push({ name:nombre, qty:cantidad, price: price??null, pointsUnit });
     }
     renderProductos();
   }
+
   function renderProductos(){
     if (!listaProd) return;
     listaProd.innerHTML='';
@@ -487,6 +520,7 @@
     });
     updatePuntosResumen();
   }
+
   function updatePuntosResumen(){
     if (!tablaPuntosBody) return;
     tablaPuntosBody.innerHTML='';
@@ -499,6 +533,7 @@
     });
     if (totalPuntosEl) totalPuntosEl.textContent=String(total);
   }
+
   function getPuntosDetalle(){
     let total=0;
     const detalle=productos.map(p=>{
@@ -509,13 +544,29 @@
   }
 
   // ===== Guardar =====
-  function addMonths(date, months){ const d=new Date(date.getTime()); d.setMonth(d.getMonth()+months); return d; }
-  function startEndOfToday(){ const s=new Date(); s.setHours(0,0,0,0); const e=new Date(); e.setHours(23,59,59,999); return {start:s.getTime(), end:e.getTime()}; }
-  function ymdFromISO(iso){ return String(iso||'').replace(/-/g,''); }
+  function addMonths(date, months){
+    const d=new Date(date.getTime());
+    d.setMonth(d.getMonth()+months);
+    return d;
+  }
+
+  function startEndOfToday(){
+    const s=new Date(); s.setHours(0,0,0,0);
+    const e=new Date(); e.setHours(23,59,59,999);
+    return {start:s.getTime(), end:e.getTime()};
+  }
+
+  function ymdFromISO(iso){
+    return String(iso||'').replace(/-/g,'');
+  }
 
   async function registrarTicketRTDB(){
     const user=auth.currentUser;
-    if (!user){ msgTicket.className='validacion-msg err'; msgTicket.textContent="Debes iniciar sesión para registrar."; return; }
+    if (!user){
+      msgTicket.className='validacion-msg err';
+      msgTicket.textContent="Debes iniciar sesión para registrar.";
+      return;
+    }
 
     const folio=(iNum.value||'').trim().toUpperCase();
     const fechaStr=iFecha.value;
@@ -523,7 +574,8 @@
 
     if (!/^\d{5}$/.test(folio) || !fechaStr || !totalNum){
       msgTicket.className='validacion-msg err';
-      msgTicket.textContent="Faltan datos válidos: folio (5 dígitos), fecha y total."; return;
+      msgTicket.textContent="Faltan datos válidos: folio (5 dígitos), fecha y total.";
+      return;
     }
 
     // Puntos desde productos (o fallback por total)
@@ -536,8 +588,18 @@
       else if (totalNum >= 120) pts = 7;
       else pts = 4;
 
-      productos = [{ name:"Consumo Applebee's", qty:1, price: totalNum, pointsUnit: pts }];
-      detalle   = [{ producto:"Consumo Applebee's", cantidad:1, puntos_unitarios:pts, puntos_subtotal:pts }];
+      productos = [{
+        name:"Consumo Applebee's",
+        qty:1,
+        price: totalNum,
+        pointsUnit: pts
+      }];
+      detalle   = [{
+        producto:"Consumo Applebee's",
+        cantidad:1,
+        puntos_unitarios:pts,
+        puntos_subtotal:pts
+      }];
 
       puntosTotal = pts;
       renderProductos();
@@ -549,11 +611,14 @@
     if (DAY_LIMIT>0){
       try{
         const {start,end}=startEndOfToday();
-        const qs=db.ref(`users/${user.uid}/tickets`).orderByChild('createdAt').startAt(start).endAt(end);
+        const qs=db.ref(`users/${user.uid}/tickets`)
+          .orderByChild('createdAt').startAt(start).endAt(end);
         const snap=await qs.once('value');
         const countToday=snap.exists()?Object.keys(snap.val()).length:0;
         if (countToday>=DAY_LIMIT){
-          msgTicket.className='validacion-msg err'; msgTicket.textContent=`⚠️ Ya registraste ${DAY_LIMIT} tickets hoy.`; return;
+          msgTicket.className='validacion-msg err';
+          msgTicket.textContent=`⚠️ Ya registraste ${DAY_LIMIT} tickets hoy.`;
+          return;
         }
       }catch(err){ console.warn('No pude verificar límite diario:',err); }
     }
@@ -569,9 +634,14 @@
 
     try{
       // Índice anti-duplicado
-      const idxTx = await indexRef.transaction(curr=>{ if (curr) return; return { uid:user.uid, createdAt:Date.now() }; });
+      const idxTx = await indexRef.transaction(curr=>{
+        if (curr) return;
+        return { uid:user.uid, createdAt:Date.now() };
+      });
       if (!idxTx.committed){
-        msgTicket.className='validacion-msg err'; msgTicket.textContent="❌ Este folio ya fue registrado para esa fecha."; return;
+        msgTicket.className='validacion-msg err';
+        msgTicket.textContent="❌ Este folio ya fue registrado para esa fecha.";
+        return;
       }
 
       // Crea ticket
@@ -581,7 +651,12 @@
           folio,
           fecha: fechaStr,
           total: totalNum,
-          productos: productos.map(p=>({ nombre:p.name, cantidad:p.qty, precioLinea:p.price ?? null, puntos_unitarios:p.pointsUnit })),
+          productos: productos.map(p=>({
+            nombre:p.name,
+            cantidad:p.qty,
+            precioLinea:p.price ?? null,
+            puntos_unitarios:p.pointsUnit
+          })),
           puntos: { total: puntosEnteros, detalle },
           puntosTotal: puntosEnteros,
           points: puntosEnteros,
@@ -590,7 +665,9 @@
         };
       });
       if (!res.committed){
-        msgTicket.className='validacion-msg err'; msgTicket.textContent="❌ Este ticket ya está en tu cuenta."; return;
+        msgTicket.className='validacion-msg err';
+        msgTicket.textContent="❌ Este ticket ya está en tu cuenta.";
+        return;
       }
 
       // Suma al saldo
@@ -622,7 +699,7 @@
     }
   });
 
-  // recibe productos desde ocr.js (y desde applyParsedFields)
+  // recibe productos desde applyParsedFields
   document.addEventListener('ocr:productos', ev=>{
     const det = ev.detail || [];
     productos = [];
