@@ -177,7 +177,9 @@
   //  PARSER PRECISO DE TICKET
   // =========================
   function parseTicketFromText(raw){
-    const rxMoney = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/;
+    // 👇 una regex para líneas y otra para matchAll
+    const rxMoneyLine = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/;
+    const rxMoneyAll  = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/g;
     const rxDate  = /\b(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})\b/; // dd/mm/aaaa
     const rxHour  = /\b\d{1,2}:\d{2}\s?(?:AM|PM)?\b/i;
 
@@ -217,19 +219,24 @@
     let total = null;
     for (let i=0;i<lines.length;i++){
       if (/^total\b/i.test(lines[i]) || /impt\.?total/i.test(lines[i])){
-        const m = lines[i].match(rxMoney) || (lines[i+1]?.match(rxMoney));
+        let m = lines[i].match(rxMoneyLine) || (lines[i+1]?.match(rxMoneyLine));
         if (m){ total = parseFloat(m[1].replace(/\./g,'').replace(',','.')); break; }
       }
     }
     if (total==null){
       // fallback: "Efectivo" o último importe del ticket
       for (let i=lines.length-1; i>=0; i--){
-        if (/efectivo/i.test(lines[i]) && rxMoney.test(lines[i])){
-          total = parseFloat(lines[i].match(rxMoney)[1].replace(/\./g,'').replace(',','.')); break;
+        if (/efectivo/i.test(lines[i]) && rxMoneyLine.test(lines[i])){
+          const m = lines[i].match(rxMoneyLine);
+          if (m){
+            total = parseFloat(m[1].replace(/\./g,'').replace(',','.'));
+            break;
+          }
         }
       }
       if (total==null){
-        const all = [...text.matchAll(rxMoney)].map(m=>m[1]);
+        rxMoneyAll.lastIndex = 0;
+        const all = [...text.matchAll(rxMoneyAll)].map(m=>m[1]);
         if (all.length){ total = parseFloat(all[all.length-1].replace(/\./g,'').replace(',','.')); }
       }
     }
@@ -240,7 +247,7 @@
     let firstItemIdx = -1;
     for (let i=0;i<lines.length;i++){
       if (!/(mesero|mesa|clientes?|reimpresion|fecha|hora|total|iva|impuesto|cuenta|efectivo|cambio|cp|regimen)/i.test(lines[i])){
-        if (rxMoney.test(lines[i]) || (lines[i+1] && rxMoney.test(lines[i+1]))){
+        if (rxMoneyLine.test(lines[i]) || (lines[i+1] && rxMoneyLine.test(lines[i+1]))){
           firstItemIdx = i; break;
         }
       }
@@ -254,22 +261,25 @@
         if (!name || proms.test(name)) continue;
 
         // mismo renglón: "Nombre .... 229.00"
-        let m = name.match(rxMoney);
+        let m = name.match(rxMoneyLine);
         if (m){
           const price = parseFloat(m[1].replace(/\./g,'').replace(',','.'));
-          name = name.replace(rxMoney,'').replace(/[.\-]+$/,'').trim();
+          name = name.replace(rxMoneyLine,'').replace(/[.\-]+$/,'').trim();
           name = fixProductName(name);
           if (name && !proms.test(name)) products.push({ name, qty:1, price });
           continue;
         }
 
         // siguiente renglón tiene el precio
-        if (i+1 < end && rxMoney.test(lines[i+1]) && !proms.test(lines[i+1])){
-          const price = parseFloat(lines[i+1].match(rxMoney)[1].replace(/\./g,'').replace(',','.'));
-          name = fixProductName(name.replace(/[.\-]+$/,'').trim());
-          if (name) products.push({ name, qty:1, price });
-          i++;
-          continue;
+        if (i+1 < end && rxMoneyLine.test(lines[i+1]) && !proms.test(lines[i+1])){
+          const mm = lines[i+1].match(rxMoneyLine);
+          if (mm){
+            const price = parseFloat(mm[1].replace(/\./g,'').replace(',','.'));
+            name = fixProductName(name.replace(/[.\-]+$/,'').trim());
+            if (name) products.push({ name, qty:1, price });
+            i++;
+            continue;
+          }
         }
 
         // sin precio, igual lo tomamos
@@ -337,7 +347,6 @@
   }
 
   // También aceptamos eventos crudos desde ocr.js:
-  // document.dispatchEvent(new CustomEvent('ocr:text', { detail: { text } }))
   document.addEventListener('ocr:text', (ev)=>{
     const raw = ev?.detail?.text || ev?.detail;
     if (!raw) return;
@@ -611,4 +620,3 @@
     console.error("[promise rejection]", e.reason || e);
   });
 })();
-
