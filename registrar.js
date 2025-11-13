@@ -197,144 +197,173 @@
   }
 
   // =========================
-  //  PARSER PRECISO DE TICKET (local)
+  //  PARSER PRECISO DE TICKET (formato Applebee's)
   // =========================
   function parseTicketFromText(raw){
-    const rxMoney  = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/;   // sin global
-    const rxMoneyG = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/g;  // global solo para matchAll
-    const rxDate   = /\b(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})\b/; // dd/mm/aaaa
-    const rxHour   = /\b\d{1,2}:\d{2}\s?(?:AM|PM)?\b/i;
+    // dinero: versión simple + versión global para matchAll
+    const rxMoney   = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/;
+    const rxMoneyG  = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/g;
+    const rxDate    = /\b(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})\b/; // dd/mm/aaaa
+    const rxHour    = /\b\d{1,2}:\d{2}\s*(?:AM|PM)?\b/i;
 
-    const text = cleanOCR(raw);
-    const lines = text.split('\n').map(s=>s.trim()).filter(Boolean);
+    const text  = cleanOCR(raw);
+    const lines = text.split(/\n+/).map(s => s.trim()).filter(Boolean);
 
-    // --- FECHA: primera dd/mm/aaaa válida ---
+    // ========= FECHA (flecha azul) =========
     let fechaISO = '';
-    for (const l of lines){
+    for (const l of lines) {
       const m = l.match(rxDate);
-      if (m){
-        let [_, d, mo, y] = m;
-        let dd = parseInt(d, 10);
-        let mm = parseInt(mo, 10);
-        let yy = parseInt(y, 10);
-
-        if (y.length === 2) {
-          yy = (yy < 50) ? 2000 + yy : 1900 + yy;
+      if (m) {
+        let d  = parseInt(m[1],10);
+        let mo = parseInt(m[2],10);
+        let y  = parseInt(m[3],10);
+        if (m[3].length === 2) {
+          y = (y < 50) ? 2000 + y : 1900 + y;
         }
-
-        if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12) {
-          const ddStr = String(dd).padStart(2,'0');
-          const mmStr = String(mm).padStart(2,'0');
-          fechaISO = `${yy}-${mmStr}-${ddStr}`;
+        if (d>=1 && d<=31 && mo>=1 && mo<=12) {
+          const dd = String(d ).padStart(2,'0');
+          const mm = String(mo).padStart(2,'0');
+          fechaISO = `${y}-${mm}-${dd}`;
           break;
         }
       }
     }
 
-    // --- FOLIO: 5 dígitos cerca de la hora ---
+    // ========= FOLIO (flecha roja) =========
     let folio = '';
-    let hourIndex = lines.findIndex(l => rxHour.test(l));
-    if (hourIndex === -1) hourIndex = 0;
-    const windowStart = Math.max(0, hourIndex-2);
-    const windowEnd   = Math.min(lines.length-1, hourIndex+4);
-    for (let i=windowStart; i<=windowEnd; i++){
-      const m = lines[i].match(/\b(\d{5})\b/);
-      if (m){ folio = m[1]; break; }
+
+    // 1) Línea de "Clientes" suele tener el folio a la derecha
+    for (const l of lines) {
+      if (/clientes?/i.test(l)) {
+        const m = l.match(/(\d{4,6})\b(?!.*\d)/); // últimos 4–6 dígitos de la línea
+        if (m) {
+          folio = m[1];
+          break;
+        }
+      }
     }
-    if (!folio){
+
+    // 2) Si no se encontró, buscar cerca de la hora/fecha
+    if (!folio) {
+      let hourIndex = lines.findIndex(l => rxHour.test(l));
+      if (hourIndex === -1) hourIndex = 0;
+      const windowStart = Math.max(0, hourIndex - 2);
+      const windowEnd   = Math.min(lines.length - 1, hourIndex + 4);
+      for (let i = windowStart; i <= windowEnd; i++) {
+        const m = lines[i].match(/\b(\d{5})\b/);
+        if (m) { folio = m[1]; break; }
+      }
+    }
+
+    // 3) Último recurso: cualquier 5 dígitos en todo el texto
+    if (!folio) {
       const m = text.match(/\b(\d{5})\b/);
       if (m) folio = m[1];
     }
 
-    // --- TOTAL: prioriza "Total" o "Impt.Total" ---
+    // ========= TOTAL (flecha amarilla) =========
     let total = null;
-    for (let i=0;i<lines.length;i++){
-      if (/^total\b/i.test(lines[i]) || /impt\.?total/i.test(lines[i])){
-        const m = lines[i].match(rxMoney) || (lines[i+1]?.match(rxMoney));
-        if (m){
+    for (let i=0; i<lines.length; i++) {
+      const l = lines[i];
+      if (/total\b/i.test(l) && !/propina|visa|master|tarjeta/i.test(l)) {
+        // línea "Total 716.00"
+        let m = l.match(rxMoney);
+        if (!m && lines[i+1]) {
+          // a veces el importe está en la siguiente línea
+          m = lines[i+1].match(rxMoney);
+        }
+        if (m) {
           const numStr = m[1] || m[0];
-          total = parseFloat(numStr.replace(/\./g,'').replace(',','.'));
+          total = parseFloat(numStr.replace(/\./g,'').replace(',', '.'));
           break;
         }
       }
     }
-    if (total==null){
-      // fallback: "Efectivo" o último importe del ticket
-      for (let i=lines.length-1; i>=0; i--){
-        if (/efectivo/i.test(lines[i]) && rxMoney.test(lines[i])){
-          const mm = lines[i].match(rxMoney);
-          if (mm){
-            const numStr = mm[1] || mm[0];
-            total = parseFloat(numStr.replace(/\./g,'').replace(',','.'));
-            break;
-          }
-        }
-      }
-      if (total==null){
-        const all = [...text.matchAll(rxMoneyG)].map(m=>m[1]);
-        if (all.length){
-          const numStr = all[all.length-1];
-          total = parseFloat(numStr.replace(/\./g,'').replace(',','.'));
-        }
+    // Fallback: usa el mayor importe del ticket si no encontró la línea "Total"
+    if (total == null) {
+      const all = [...text.matchAll(rxMoneyG)].map(m => m[1]);
+      if (all.length) {
+        const nums = all.map(s => parseFloat(s.replace(/\./g,'').replace(',','.')))
+                        .filter(v => !Number.isNaN(v));
+        if (nums.length) total = Math.max(...nums);
       }
     }
 
-    // --- PRODUCTOS: entre items y "Sub-total" ---
-    const proms = /(2x1|promo|promocion|desayunos? ?2x1)/i;
-    const stopIdx = lines.findIndex(l => /sub[\s-]?total/i.test(l));
-    let firstItemIdx = -1;
-    for (let i=0;i<lines.length;i++){
-      if (!/(mesero|mesa|clientes?|reimpresion|fecha|hora|total|iva|impuesto|cuenta|efectivo|cambio|cp|regimen)/i.test(lines[i])){
-        if (rxMoney.test(lines[i]) || (lines[i+1] && rxMoney.test(lines[i+1]))){
-          firstItemIdx = i; break;
-        }
-      }
-    }
-
+    // ========= PRODUCTOS (flechas verdes) =========
     const products = [];
-    if (firstItemIdx>=0){
-      const end = stopIdx>firstItemIdx ? stopIdx : Math.min(lines.length, firstItemIdx+25);
-      for (let i=firstItemIdx; i<end; i++){
+    const promRx   = /(2x1|promo|promoción|promocion|desayunos? ?2x1)/i;
+
+    // 1) localizar la línea de "Sub-total"
+    const subIdx = lines.findIndex(l => /sub[\s-]?total/i.test(l));
+    if (subIdx > 0) {
+      // 2) recorrer hacia arriba desde la línea anterior a "Sub-total"
+      let firstItemIdx = subIdx - 1;
+      while (firstItemIdx >= 0) {
+        const line = lines[firstItemIdx];
+        // si llegamos a encabezados, paramos
+        if (/mesero|mesa|clientes?|reimpresion/i.test(line)) {
+          firstItemIdx++;
+          break;
+        }
+        // si NO tiene precio ni la siguiente línea, cortamos
+        const hasPrice   = rxMoney.test(line);
+        const nextPrice  = lines[firstItemIdx+1] && rxMoney.test(lines[firstItemIdx+1]);
+        if (!hasPrice && !nextPrice) {
+          firstItemIdx++;
+          break;
+        }
+        firstItemIdx--;
+      }
+      if (firstItemIdx < 0) firstItemIdx = 0;
+
+      // 3) de firstItemIdx hasta la línea anterior a "Sub-total"
+      for (let i = firstItemIdx; i < subIdx; i++) {
         let name = lines[i];
         if (!name) continue;
 
-        // saltar líneas claramente administrativas
-        if (/(mesero|mesa|clientes?|reimpresion|fecha|hora|regimen fiscal)/i.test(name)) {
-          continue;
-        }
-        if (proms.test(name)) continue;
+        if (promRx.test(name)) continue;
+        if (/sub[\s-]?total/i.test(name)) continue;
 
-        // mismo renglón: "Nombre .... 229.00"
+        // caso A: "Nombre .......... 149.00"
         let m = name.match(rxMoney);
-        if (m){
+        if (m) {
           const numStr = m[1] || m[0];
-          const price = parseFloat(numStr.replace(/\./g,'').replace(',','.'));
+          const price  = parseFloat(numStr.replace(/\./g,'').replace(',','.'));
           name = name.replace(rxMoney,'').replace(/[.\-]+$/,'').trim();
           name = fixProductName(name);
-          if (name && !proms.test(name)) products.push({ name, qty:1, price });
+          if (name && !promRx.test(name)) {
+            products.push({ name, qty:1, price });
+          }
           continue;
         }
 
-        // siguiente renglón tiene el precio
-        if (i+1 < end && rxMoney.test(lines[i+1]) && !proms.test(lines[i+1])){
+        // caso B: nombre en la línea y precio en la siguiente
+        if (i+1 < subIdx && rxMoney.test(lines[i+1])) {
           const mm = lines[i+1].match(rxMoney);
-          if (mm){
+          if (mm) {
             const numStr = mm[1] || mm[0];
-            const price = parseFloat(numStr.replace(/\./g,'').replace(',','.'));
+            const price  = parseFloat(numStr.replace(/\./g,'').replace(',','.'));
             name = fixProductName(name.replace(/[.\-]+$/,'').trim());
-            if (name) products.push({ name, qty:1, price });
-            i++;
+            if (name && !promRx.test(name)) {
+              products.push({ name, qty:1, price });
+            }
+            i++; // saltamos la línea de precio
             continue;
           }
         }
 
-        // sin precio, igual lo tomamos (qty=1, price=null)
+        // sin precio, igual lo tomamos
         name = fixProductName(name);
-        if (name && !proms.test(name)) products.push({ name, qty:1 });
+        if (name && !promRx.test(name)) products.push({ name, qty:1 });
       }
     }
 
-    return { folio, fechaISO, total, productos: products };
+    return {
+      folio,
+      fechaISO,
+      total,
+      productos: products
+    };
   }
 
   function applyParsedFields(parsed, fallbackItems){
@@ -699,7 +728,7 @@
     }
   });
 
-  // recibe productos desde applyParsedFields
+  // recibe productos desde applyParsedFields / ocr.js
   document.addEventListener('ocr:productos', ev=>{
     const det = ev.detail || [];
     productos = [];
