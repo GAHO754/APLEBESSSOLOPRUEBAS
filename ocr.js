@@ -1,3 +1,5 @@
+// ocr.js — Preprocesado + Tesseract + IA opcional (devuelve texto crudo)
+
 const DBG = { lines: [], notes: [] };
 function dbgNote(s) { try { DBG.notes.push(String(s)); } catch {} }
 function dbgDump() {
@@ -10,17 +12,17 @@ function dbgDump() {
 
 /* ====== IA ====== */
 // Opción A (directo) — deja vacío si usarás proxy:
-const OPENAI_API_KEY = "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"; // p.ej. "sk-proj-xxxxxxxx", o vacío si usarás proxy
-// Opción B (proxy Firebase Functions Gen2)
-const OPENAI_PROXY_ENDPOINT = window.OPENAI_PROXY_ENDPOINT || ""; // 
+const OPENAI_API_KEY = ""; // ej. "sk-proj-xxxx", vacío si usas proxy
+// Opción B (proxy Firebase / Cloud Run)
+const OPENAI_PROXY_ENDPOINT = window.OPENAI_PROXY_ENDPOINT || "";
 
 /* ====== UI helpers ====== */
 function setIABadge(state, msg) {
   const el = document.getElementById('iaBadge');
   if (!el) return;
-  if (state === 'ok') { el.style.background = '#2e7d32'; el.textContent = `IA: OK ${msg||''}`; }
-  else if (state === 'err') { el.style.background = '#c62828'; el.textContent = `IA: ERROR ${msg||''}`; }
-  else { el.style.background = '#444'; el.textContent = `IA: ${msg||'esperando…'}`; }
+  if (state === 'ok')      { el.style.background = '#2e7d32'; el.textContent = `IA: OK ${msg||''}`; }
+  else if (state === 'err'){ el.style.background = '#c62828'; el.textContent = `IA: ERROR ${msg||''}`; }
+  else                     { el.style.background = '#444';    el.textContent = `IA: ${msg||'esperando…'}`; }
 }
 
 /* ====== Utils ====== */
@@ -97,6 +99,7 @@ const NOT_PRODUCT_RX = new RegExp(
   "i"
 );
 const CODEY_RX = /^(?:[>-]{1,3}\s*)?[A-Z]{2,6}\d{2,6}[A-Z0-9\-]*$/;
+
 function looksLikeFoodOrDrink(nameRaw) {
   if (!nameRaw) return false;
   const n = nameRaw.toLowerCase();
@@ -265,106 +268,39 @@ function extractDateISO(text) {
 }
 
 /* ====== PREPROCESADO IMAGEN ====== */
-/* ====== PREPROCESADO IMAGEN ====== */
 async function preprocessImage(file) {
-  // 1) Cargamos la imagen original
   const bmp = await createImageBitmap(file);
-  let w = bmp.width;
-  let h = bmp.height;
-
-  // Detectar si la foto salió “acostada”
-  let rotate = false;
+  let w = bmp.width, h = bmp.height, rotate = false;
   if (w > h * 1.6) rotate = true;
-
-  // 2) Escalamos a un tamaño razonable para OCR
   const targetH = 2800;
   const scale = Math.max(1.4, Math.min(3.2, targetH / (rotate ? w : h)));
-
-  const baseCanvas = document.createElement("canvas");
+  const c = document.createElement("canvas");
+  if (rotate) { c.width = Math.round(h * scale); c.height = Math.round(w * scale); }
+  else { c.width = Math.round(w * scale); c.height = Math.round(h * scale); }
+  const ctx = c.getContext("2d");
+  ctx.filter = "grayscale(1) contrast(1.35) brightness(1.05)";
   if (rotate) {
-    baseCanvas.width  = Math.round(h * scale);
-    baseCanvas.height = Math.round(w * scale);
+    ctx.translate(c.width / 2, c.height / 2);
+    ctx.rotate(Math.PI / 2);
+    ctx.drawImage(bmp, -w * scale / 2, -h * scale / 2, w * scale, h * scale);
   } else {
-    baseCanvas.width  = Math.round(w * scale);
-    baseCanvas.height = Math.round(h * scale);
+    ctx.drawImage(bmp, 0, 0, c.width, c.height);
   }
-
-  const bctx = baseCanvas.getContext("2d");
-
-  // Blanco y negro + contraste fuerte sobre la imagen original
-  bctx.filter = "grayscale(1) contrast(1.5) brightness(1.08)";
-  if (rotate) {
-    bctx.translate(baseCanvas.width / 2, baseCanvas.height / 2);
-    bctx.rotate(Math.PI / 2);
-    bctx.drawImage(
-      bmp,
-      -w * scale / 2,
-      -h * scale / 2,
-      w * scale,
-      h * scale
-    );
-  } else {
-    bctx.drawImage(bmp, 0, 0, baseCanvas.width, baseCanvas.height);
-  }
-
-  // 3) Recortar SOLO la zona central vertical (donde va el ticket)
-  //    Esto quita las piernas, piso, fondo, etc.
-  const cropCanvas = document.createElement("canvas");
-  const marginX = baseCanvas.width * 0.18;  // 18% a cada lado
-  const marginTop = baseCanvas.height * 0.06;
-  const marginBottom = baseCanvas.height * 0.06;
-
-  const cropW = baseCanvas.width - marginX * 2;
-  const cropH = baseCanvas.height - marginTop - marginBottom;
-
-  cropCanvas.width  = Math.round(cropW);
-  cropCanvas.height = Math.round(cropH);
-
-  const cctx = cropCanvas.getContext("2d");
-  cctx.drawImage(
-    baseCanvas,
-    marginX,
-    marginTop,
-    cropW,
-    cropH,
-    0,
-    0,
-    cropCanvas.width,
-    cropCanvas.height
-  );
-
-  // 4) Opcional: usar OpenCV sobre el recorte (si está cargado)
   if (typeof cv !== "undefined" && cv?.Mat) {
     try {
-      let src = cv.imread(cropCanvas);
+      let src = cv.imread(c);
       let gray = new cv.Mat();
       cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
-
       let bw = new cv.Mat();
-      cv.adaptiveThreshold(
-        gray,
-        bw,
-        255,
-        cv.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv.THRESH_BINARY,
-        35,
-        5
-      );
-
-      cv.imshow(cropCanvas, bw);
-
-      src.delete();
-      gray.delete();
-      bw.delete();
+      cv.adaptiveThreshold(gray, bw, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 35, 5);
+      cv.imshow(c, bw);
+      src.delete(); gray.delete(); bw.delete();
     } catch (e) {
       console.warn("OpenCV preprocess falló:", e);
     }
   }
-
-  // Devolvemos SIEMPRE el canvas recortado
-  return cropCanvas;
+  return c;
 }
-
 
 /* ====== Tesseract ====== */
 async function runTesseract(canvas) {
@@ -395,8 +331,8 @@ Debes responder SOLO JSON válido con este shape exacto:
   "items": [{"name":"string","qty":number,"price":number}]
 }
 Reglas:
-- No inventes datos. Si no ves algo, devuelve vacío (folio/fecha) o 0/[].`
-    + `
+- No inventes datos. Si no ves algo, devuelve vacío (folio/fecha) o 0/[].` +
+`
 - "items" solo comida/bebida (excluye IVA/subtotal/propina/pagos).
 - qty >= 1. price = importe de línea; si no se ve, usa 0.
 - Responde SOLO JSON (sin texto extra).
@@ -407,6 +343,7 @@ Reglas:
   setIABadge(null, 'llamando…');
 
   try {
+    // Proxy (Cloud Run / Functions)
     if (OPENAI_PROXY_ENDPOINT) {
       const resp = await fetch(OPENAI_PROXY_ENDPOINT, {
         method: "POST",
@@ -427,6 +364,7 @@ Reglas:
       return j;
     }
 
+    // Llamada directa a OpenAI (solo si configuraste API key)
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -468,7 +406,10 @@ Reglas:
 /* ====== Proceso principal ====== */
 async function processTicketWithIA(file) {
   const statusEl = document.getElementById("ocrStatus");
-  if (statusEl) { statusEl.textContent = "🕐 Escaneando ticket…"; statusEl.className = "validacion-msg"; }
+  if (statusEl) {
+    statusEl.textContent = "🕐 Escaneando ticket…";
+    statusEl.className = "validacion-msg";
+  }
 
   try {
     DBG.notes = []; DBG.lines = [];
@@ -476,9 +417,6 @@ async function processTicketWithIA(file) {
     const canvas = await preprocessImage(file);
     const text = await runTesseract(canvas);
     dbgNote("OCR listo, longitud: " + text.length);
-
-    // 🔹 Nuevo: avisar al front del texto crudo para quien lo quiera usar (registrar.js)
-    document.dispatchEvent(new CustomEvent("ocr:text", { detail: { text } }));
 
     let result = null;
     try {
@@ -491,7 +429,8 @@ async function processTicketWithIA(file) {
           (typeof result.total === 'number' && result.total>0) ? 'total' : null,
           (Array.isArray(result.items) && result.items.length>0) ? 'items' : null
         ].filter(Boolean);
-        if (statusEl) statusEl.textContent = `IA OK (${okFields.join(', ')||'sin campos'})… afinando con parser local.`;
+        if (statusEl) statusEl.textContent =
+          `IA OK (${okFields.join(', ')||'sin campos'})… afinando con parser local.`;
       }
     } catch (iaErr) {
       console.warn("IA falló, usando parser local:", iaErr);
@@ -534,29 +473,6 @@ async function processTicketWithIA(file) {
       return true;
     });
 
-    // A la UI
-    const iNum = document.getElementById("inputTicketNumero");
-    const iFecha = document.getElementById("inputTicketFecha");
-    const iTotal = document.getElementById("inputTicketTotal");
-
-    if (iNum)  { iNum.value  = folio || ""; }
-    if (iFecha && fecha) { iFecha.value = fecha; }
-    if (iTotal && total != null) { iTotal.value = total.toFixed(2); iTotal.disabled = false; }
-
-    const payload = finalItems.map(it => ({
-      name: it.name,
-      qty: it.qty || 1,
-      price: typeof it.price === "number" ? it.price : null
-    }));
-
-    // productos para registrar.js
-    document.dispatchEvent(new CustomEvent("ocr:productos", { detail: payload }));
-
-    // opcional: también mandamos todo el objeto ya parseado
-    document.dispatchEvent(new CustomEvent("ocr:parsed", {
-      detail: { folio, fecha, total, items: finalItems }
-    }));
-
     if (statusEl) {
       statusEl.className = "validacion-msg ok";
       statusEl.textContent = "✓ Ticket procesado. Verifica y presiona “Registrar”.";
@@ -564,36 +480,20 @@ async function processTicketWithIA(file) {
 
     dbgDump();
 
-    // 🔹 IMPORTANTE para registrar.js: regresamos info estructurada
+    // devolvemos texto crudo + datos estimados para registrar.js
     return { text, folio, fecha, total, items: finalItems };
   } catch (e) {
     console.error(e);
     const statusEl2 = document.getElementById("ocrStatus");
     if (statusEl2) {
       statusEl2.className = "validacion-msg err";
-      statusEl2.textContent = "❌ No pude leer el ticket. Intenta con mejor luz o que salga completo.";
+      statusEl2.textContent =
+        "❌ No pude leer el ticket. Intenta con mejor luz o que salga completo.";
     }
     alert("No se pudo leer el ticket. Vuelve a tomar la foto más cerca, recto y con buena luz.");
-    // para que registrar.js no truene:
     return { text: "", folio: "", fecha: "", total: null, items: [] };
   }
 }
 
-/* ====== Auto-OCR (sin botón) ====== */
-(function bindAutoOCR(){
-  const fileInput = document.getElementById('ticketFile');
-  if (!fileInput) return;
-  fileInput.addEventListener('change', async (e)=>{
-    const f = e.target.files && e.target.files[0];
-    if (!f) return;
-    const statusEl = document.getElementById("ocrStatus");
-    if (statusEl) { statusEl.textContent = "🕐 Preparando OCR…"; statusEl.className = "validacion-msg"; }
-    try { await processTicketWithIA(f); }
-    catch { /* el catch interno ya muestra mensajes */ }
-  });
-})();
-
-// 🔹 Muy importante: exponer la función globalmente para registrar.js
+// Exponer la función globalmente para registrar.js
 window.processTicketWithIA = processTicketWithIA;
-
-
