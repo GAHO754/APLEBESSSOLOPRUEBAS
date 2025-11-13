@@ -265,39 +265,106 @@ function extractDateISO(text) {
 }
 
 /* ====== PREPROCESADO IMAGEN ====== */
+/* ====== PREPROCESADO IMAGEN ====== */
 async function preprocessImage(file) {
+  // 1) Cargamos la imagen original
   const bmp = await createImageBitmap(file);
-  let w = bmp.width, h = bmp.height, rotate = false;
+  let w = bmp.width;
+  let h = bmp.height;
+
+  // Detectar si la foto salió “acostada”
+  let rotate = false;
   if (w > h * 1.6) rotate = true;
+
+  // 2) Escalamos a un tamaño razonable para OCR
   const targetH = 2800;
   const scale = Math.max(1.4, Math.min(3.2, targetH / (rotate ? w : h)));
-  const c = document.createElement("canvas");
-  if (rotate) { c.width = Math.round(h * scale); c.height = Math.round(w * scale); }
-  else { c.width = Math.round(w * scale); c.height = Math.round(h * scale); }
-  const ctx = c.getContext("2d");
-  ctx.filter = "grayscale(1) contrast(1.35) brightness(1.05)";
+
+  const baseCanvas = document.createElement("canvas");
   if (rotate) {
-    ctx.translate(c.width / 2, c.height / 2);
-    ctx.rotate(Math.PI / 2);
-    ctx.drawImage(bmp, -w * scale / 2, -h * scale / 2, w * scale, h * scale);
+    baseCanvas.width  = Math.round(h * scale);
+    baseCanvas.height = Math.round(w * scale);
   } else {
-    ctx.drawImage(bmp, 0, 0, c.width, c.height);
+    baseCanvas.width  = Math.round(w * scale);
+    baseCanvas.height = Math.round(h * scale);
   }
+
+  const bctx = baseCanvas.getContext("2d");
+
+  // Blanco y negro + contraste fuerte sobre la imagen original
+  bctx.filter = "grayscale(1) contrast(1.5) brightness(1.08)";
+  if (rotate) {
+    bctx.translate(baseCanvas.width / 2, baseCanvas.height / 2);
+    bctx.rotate(Math.PI / 2);
+    bctx.drawImage(
+      bmp,
+      -w * scale / 2,
+      -h * scale / 2,
+      w * scale,
+      h * scale
+    );
+  } else {
+    bctx.drawImage(bmp, 0, 0, baseCanvas.width, baseCanvas.height);
+  }
+
+  // 3) Recortar SOLO la zona central vertical (donde va el ticket)
+  //    Esto quita las piernas, piso, fondo, etc.
+  const cropCanvas = document.createElement("canvas");
+  const marginX = baseCanvas.width * 0.18;  // 18% a cada lado
+  const marginTop = baseCanvas.height * 0.06;
+  const marginBottom = baseCanvas.height * 0.06;
+
+  const cropW = baseCanvas.width - marginX * 2;
+  const cropH = baseCanvas.height - marginTop - marginBottom;
+
+  cropCanvas.width  = Math.round(cropW);
+  cropCanvas.height = Math.round(cropH);
+
+  const cctx = cropCanvas.getContext("2d");
+  cctx.drawImage(
+    baseCanvas,
+    marginX,
+    marginTop,
+    cropW,
+    cropH,
+    0,
+    0,
+    cropCanvas.width,
+    cropCanvas.height
+  );
+
+  // 4) Opcional: usar OpenCV sobre el recorte (si está cargado)
   if (typeof cv !== "undefined" && cv?.Mat) {
     try {
-      let src = cv.imread(c);
+      let src = cv.imread(cropCanvas);
       let gray = new cv.Mat();
       cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+
       let bw = new cv.Mat();
-      cv.adaptiveThreshold(gray, bw, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 35, 5);
-      cv.imshow(c, bw);
-      src.delete(); gray.delete(); bw.delete();
+      cv.adaptiveThreshold(
+        gray,
+        bw,
+        255,
+        cv.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv.THRESH_BINARY,
+        35,
+        5
+      );
+
+      cv.imshow(cropCanvas, bw);
+
+      src.delete();
+      gray.delete();
+      bw.delete();
     } catch (e) {
       console.warn("OpenCV preprocess falló:", e);
     }
   }
-  return c;
+
+  // Devolvemos SIEMPRE el canvas recortado
+  return cropCanvas;
 }
+
 
 /* ====== Tesseract ====== */
 async function runTesseract(canvas) {
@@ -528,4 +595,5 @@ async function processTicketWithIA(file) {
 
 // 🔹 Muy importante: exponer la función globalmente para registrar.js
 window.processTicketWithIA = processTicketWithIA;
+
 
