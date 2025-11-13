@@ -30,8 +30,8 @@
   const totalPuntosEl   = $('totalPuntos');
 
   // ===== Políticas =====
-  const VENCE_DIAS = 180;
-  const DAY_LIMIT  = 2;
+  const VENCE_DIAS = 180; // ~6 meses
+  const DAY_LIMIT  = 2;   // máx tickets/día
 
   // ===== Estado =====
   let isLogged = false;
@@ -177,26 +177,36 @@
   //  PARSER PRECISO DE TICKET
   // =========================
   function parseTicketFromText(raw){
-    // 👇 una regex para líneas y otra para matchAll
-    const rxMoneyLine = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/;
-    const rxMoneyAll  = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/g;
-    const rxDate  = /\b(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})\b/; // dd/mm/aaaa
-    const rxHour  = /\b\d{1,2}:\d{2}\s?(?:AM|PM)?\b/i;
+    const rxMoney   = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/;
+    const rxMoneyG  = /(\d{1,3}(?:[.,]\d{3})*[.,]\d{2})/g;
+    const rxDate    = /\b(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})\b/; // dd/mm/aaaa
+    const rxHour    = /\b\d{1,2}:\d{2}\s?(?:AM|PM)?\b/i;
 
-    const text = cleanOCR(raw);
+    const text  = cleanOCR(raw);
     const lines = text.split('\n').map(s=>s.trim()).filter(Boolean);
 
-    // --- FECHA: primera dd/mm/aaaa ---
+    // --- FECHA: primera dd/mm/aaaa válida ---
     let fechaISO = '';
     for (const l of lines){
       const m = l.match(rxDate);
       if (m){
         let [_, d, mo, y] = m;
-        if (y.length===2) y = (+y < 50 ? '20'+y : '19'+y);
-        const dd = String(d).padStart(2,'0');
-        const mm = String(mo).padStart(2,'0');
-        fechaISO = `${y}-${mm}-${dd}`;
-        break;
+        let dd = parseInt(d, 10);
+        let mm = parseInt(mo, 10);
+        let yy = parseInt(y, 10);
+
+        // año 2 dígitos -> 20xx/19xx
+        if (y.length === 2) {
+          yy = (yy < 50) ? 2000 + yy : 1900 + yy;
+        }
+
+        if (dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12) {
+          const ddStr = String(dd).padStart(2,'0');
+          const mmStr = String(mm).padStart(2,'0');
+          fechaISO = `${yy}-${mmStr}-${ddStr}`;
+          break;
+        }
+        // si dd/mm no son válidos, se ignora y se sigue buscando
       }
     }
 
@@ -219,25 +229,31 @@
     let total = null;
     for (let i=0;i<lines.length;i++){
       if (/^total\b/i.test(lines[i]) || /impt\.?total/i.test(lines[i])){
-        let m = lines[i].match(rxMoneyLine) || (lines[i+1]?.match(rxMoneyLine));
-        if (m){ total = parseFloat(m[1].replace(/\./g,'').replace(',','.')); break; }
+        const m = lines[i].match(rxMoney) || (lines[i+1]?.match(rxMoney));
+        if (m){
+          total = parseFloat(m[1].replace(/\./g,'').replace(',','.'));
+          break;
+        }
       }
     }
     if (total==null){
       // fallback: "Efectivo" o último importe del ticket
       for (let i=lines.length-1; i>=0; i--){
-        if (/efectivo/i.test(lines[i]) && rxMoneyLine.test(lines[i])){
-          const m = lines[i].match(rxMoneyLine);
-          if (m){
-            total = parseFloat(m[1].replace(/\./g,'').replace(',','.'));
-            break;
-          }
+        if (/efectivo/i.test(lines[i]) && rxMoney.test(lines[i])){
+          total = parseFloat(lines[i].match(rxMoney)[1].replace(/\./g,'').replace(',','.'));
+          break;
         }
       }
       if (total==null){
-        rxMoneyAll.lastIndex = 0;
-        const all = [...text.matchAll(rxMoneyAll)].map(m=>m[1]);
-        if (all.length){ total = parseFloat(all[all.length-1].replace(/\./g,'').replace(',','.')); }
+        const all = [];
+        let m;
+        while ((m = rxMoneyG.exec(text)) !== null) {
+          all.push(m[1]);
+        }
+        if (all.length){
+          const last = all[all.length-1];
+          total = parseFloat(last.replace(/\./g,'').replace(',','.'));
+        }
       }
     }
 
@@ -246,10 +262,11 @@
     const stopIdx = lines.findIndex(l => /sub[\s-]?total/i.test(l));
     let firstItemIdx = -1;
     for (let i=0;i<lines.length;i++){
-      if (!/(mesero|mesa|clientes?|reimpresion|fecha|hora|total|iva|impuesto|cuenta|efectivo|cambio|cp|regimen)/i.test(lines[i])){
-        if (rxMoneyLine.test(lines[i]) || (lines[i+1] && rxMoneyLine.test(lines[i+1]))){
-          firstItemIdx = i; break;
-        }
+      if (/(mesero|mesa|clientes?|reimpresion|fecha|hora|total|iva|impuesto|cuenta|efectivo|cambio|cp|regimen)/i.test(lines[i])) {
+        continue;
+      }
+      if (rxMoney.test(lines[i]) || (lines[i+1] && rxMoney.test(lines[i+1]))){
+        firstItemIdx = i; break;
       }
     }
 
@@ -258,28 +275,31 @@
       const end = stopIdx>firstItemIdx ? stopIdx : Math.min(lines.length, firstItemIdx+20);
       for (let i=firstItemIdx; i<end; i++){
         let name = lines[i];
+
+        // saltar líneas claramente administrativas
+        if (/(mesero|mesa|clientes?|reimpresion|fecha|hora|regimen fiscal)/i.test(name)) {
+          continue;
+        }
+
         if (!name || proms.test(name)) continue;
 
         // mismo renglón: "Nombre .... 229.00"
-        let m = name.match(rxMoneyLine);
+        let m = name.match(rxMoney);
         if (m){
           const price = parseFloat(m[1].replace(/\./g,'').replace(',','.'));
-          name = name.replace(rxMoneyLine,'').replace(/[.\-]+$/,'').trim();
+          name = name.replace(rxMoney,'').replace(/[.\-]+$/,'').trim();
           name = fixProductName(name);
           if (name && !proms.test(name)) products.push({ name, qty:1, price });
           continue;
         }
 
         // siguiente renglón tiene el precio
-        if (i+1 < end && rxMoneyLine.test(lines[i+1]) && !proms.test(lines[i+1])){
-          const mm = lines[i+1].match(rxMoneyLine);
-          if (mm){
-            const price = parseFloat(mm[1].replace(/\./g,'').replace(',','.'));
-            name = fixProductName(name.replace(/[.\-]+$/,'').trim());
-            if (name) products.push({ name, qty:1, price });
-            i++;
-            continue;
-          }
+        if (i+1 < end && rxMoney.test(lines[i+1]) && !proms.test(lines[i+1])){
+          const price = parseFloat(lines[i+1].match(rxMoney)[1].replace(/\./g,'').replace(',','.'));
+          name = fixProductName(name.replace(/[.\-]+$/,'').trim());
+          if (name) products.push({ name, qty:1, price });
+          i++;
+          continue;
         }
 
         // sin precio, igual lo tomamos
@@ -297,9 +317,15 @@
     if (parsed.folio && /^\d{5}$/.test(parsed.folio) && iNum){
       iNum.value = parsed.folio;
     }
+
     if (parsed.fechaISO && /^\d{4}-\d{2}-\d{2}$/.test(parsed.fechaISO) && iFecha){
-      iFecha.value = parsed.fechaISO;
+      const parts = parsed.fechaISO.split('-');
+      const dNum = parseInt(parts[2], 10);
+      if (dNum >= 1 && dNum <= 31) {
+        iFecha.value = parsed.fechaISO;
+      }
     }
+
     if (typeof parsed.total === 'number' && !Number.isNaN(parsed.total) && iTotal){
       iTotal.value = parsed.total.toFixed(2);
     }
@@ -347,6 +373,7 @@
   }
 
   // También aceptamos eventos crudos desde ocr.js:
+  // document.dispatchEvent(new CustomEvent('ocr:text', { detail: { text } }))
   document.addEventListener('ocr:text', (ev)=>{
     const raw = ev?.detail?.text || ev?.detail;
     if (!raw) return;
