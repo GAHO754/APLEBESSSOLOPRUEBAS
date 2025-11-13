@@ -1,0 +1,531 @@
+const DBG = { lines: [], notes: [] };
+function dbgNote(s) { try { DBG.notes.push(String(s)); } catch {} }
+function dbgDump() {
+  const el = document.getElementById("ocrDebug");
+  if (!el) return;
+  el.textContent =
+    "[NOTAS]\n" + DBG.notes.join("\n") +
+    "\n\n[LINEAS]\n" + DBG.lines.map((s, i) => `${String(i).padStart(2, "0")}: ${s}`).join("\n");
+}
+
+/* ====== IA ====== */
+// Opción A (directo) — deja vacío si usarás proxy:
+const OPENAI_API_KEY = "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"; // p.ej. "sk-proj-xxxxxxxx", o vacío si usarás proxy
+// Opción B (proxy Firebase Functions Gen2)
+const OPENAI_PROXY_ENDPOINT = window.OPENAI_PROXY_ENDPOINT || ""; // 
+
+/* ====== UI helpers ====== */
+function setIABadge(state, msg) {
+  const el = document.getElementById('iaBadge');
+  if (!el) return;
+  if (state === 'ok') { el.style.background = '#2e7d32'; el.textContent = `IA: OK ${msg||''}`; }
+  else if (state === 'err') { el.style.background = '#c62828'; el.textContent = `IA: ERROR ${msg||''}`; }
+  else { el.style.background = '#444'; el.textContent = `IA: ${msg||'esperando…'}`; }
+}
+
+/* ====== Utils ====== */
+function fixOcrDigits(s) {
+  return s
+    .replace(/(?<=\d)[Oo](?=\d)/g, "0")
+    .replace(/(?<=\d)S(?=\d)/g, "5")
+    .replace(/(?<=\d)[lI](?=\d)/g, "1");
+}
+function splitLines(text) {
+  const arr = String(text || "")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((s) => fixOcrDigits(s.replace(/\s{2,}/g, " ").trim()))
+    .filter(Boolean);
+  DBG.lines = arr.slice();
+  return arr;
+}
+function normalizeNum(raw) {
+  if (!raw) return null;
+  let s = String(raw).replace(/[^\d.,-]/g, "").trim();
+  if (!s) return null;
+  if (s.includes(",") && s.includes(".")) {
+    if (s.lastIndexOf(".") > s.lastIndexOf(",")) s = s.replace(/,/g, "");
+    else s = s.replace(/\./g, "").replace(",", ".");
+  } else if (s.includes(",")) {
+    const m = s.match(/,\d{2}$/);
+    s = m ? s.replace(",", ".") : s.replace(/,/g, "");
+  }
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? +n.toFixed(2) : null;
+}
+function endsWithPrice(line) {
+  const m = line.match(/(?:\$?\s*)([0-9]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})|\d+(?:[.,]\d{2}))\s*(?:mxn)?$/i);
+  if (!m) return null;
+  const price = normalizeNum(m[1]);
+  if (price == null) return null;
+  const namePart = line.replace(m[0], "").trim();
+  return { namePart, price };
+}
+function parseQtyNamePrice(line) {
+  // "2 Hamburguesa Doble 199.00"
+  let m = line.match(/^(\d{1,2})\s+(.+?)\s+(\$?\d[\d.,]*(?:mxn)?)$/i);
+  if (m) {
+    const qty = parseInt(m[1], 10);
+    const name = m[2].trim();
+    const price = normalizeNum(m[3]);
+    if (price != null) return { qty, name, price };
+  }
+  // "Hamburguesa Doble x2 199.00"
+  m = line.match(/^(.+?)\s+x\s*(\d{1,2})\s+(\$?\d[\d.,]*(?:mxn)?)$/i);
+  if (m) {
+    const name = m[1].trim();
+    const qty = parseInt(m[2], 10);
+    const price = normalizeNum(m[3]);
+    if (price != null) return { qty, name, price };
+  }
+  return null;
+}
+
+/* ====== listas ====== */
+const NOT_PRODUCT_RX = new RegExp(
+  [
+    "regimen fiscal",
+    "r.f.c", "rfc", "iva", "impt\\.?", "impuesto", "subtotal", "sub-?total",
+    "forma de pago", "metodo de pago", "cambio", "saldo", "total", "visa", "master", "amex",
+    "propina", "service", "servicio", "cargo por servicio",
+    "av\\.", "avenida", "calle", "col\\.", "colonia", "cp\\s*\\d{5}", "chihuahua", "cd juarez",
+    "mesero", "mesa", "clientes?", "reimpresion", "reimpresi[oó]n", "no\\.", "nota", "orden", "ticket",
+    "gracias por su visita", "gracias por tu visita", "vuelva pronto",
+    "folio fiscal", "cfd[ii]", "sello", "cadena original",
+    "pago con", "efectivo", "tarjeta", "cambio", "m.n.", "mxn"
+  ].join("|"),
+  "i"
+);
+const CODEY_RX = /^(?:[>-]{1,3}\s*)?[A-Z]{2,6}\d{2,6}[A-Z0-9\-]*$/;
+function looksLikeFoodOrDrink(nameRaw) {
+  if (!nameRaw) return false;
+  const n = nameRaw.toLowerCase();
+  if (NOT_PRODUCT_RX.test(n)) return false;
+  const OK = [
+    "limonada", "mojito", "margarita", "martini", "paloma", "piña colada", "pina colada",
+    "coca", "pepsi", "refresco", "agua", "jugo", "iced tea", "te shake", "shake", "lemonade",
+    "burger", "hamburguesa", "chicken", "pollo", "salad", "ensalada",
+    "tacos", "sirloin", "arrachera", "buffalo", "salmon", "pasta", "fajita",
+    "steak", "rib", "ribs", "boneless", "quesadilla", "sampler", "dip",
+    "nachos", "wings", "alitas", "combo", "trio", "shrimp",
+    "brownie", "cheesecake", "postre", "dessert", "helado"
+  ];
+  if (OK.some((w) => n.includes(w))) return true;
+  return /[a-záéíóúñ]/i.test(n) && n.length >= 3 && !CODEY_RX.test(n);
+}
+
+/* ====== merge de líneas rotas ====== */
+function mergeBrokenPriceLinesV2(lines) {
+  const out = [];
+  const isPriceLine = (s) => /^\$?\s*\d[\d.,]*(?:\s*mxn)?$/i.test((s || "").trim());
+  const isQtyLine = (s) => /^x?\s*\d{1,2}\s*$/i.test((s || "").trim());
+  for (let i = 0; i < lines.length; i++) {
+    const cur = lines[i];
+    const next = lines[i + 1];
+    const next2 = lines[i + 2];
+    if (next && isPriceLine(next) && looksLikeFoodOrDrink(cur)) {
+      out.push(cur + " " + next.trim());
+      i++;
+      continue;
+    }
+    if (next && next2 && isQtyLine(next) && isPriceLine(next2) && looksLikeFoodOrDrink(cur)) {
+      out.push(cur + " " + next.trim() + " " + next2.trim());
+      i += 2;
+      continue;
+    }
+    out.push(cur);
+  }
+  return out;
+}
+
+/* ====== ventana de productos ====== */
+function findProductsWindow(lines) {
+  const start = lines.findIndex((l) => {
+    const qtyLine = parseQtyNamePrice(l);
+    if (qtyLine && looksLikeFoodOrDrink(qtyLine.name)) return true;
+    const end = endsWithPrice(l);
+    if (!end) return false;
+    const left = end.namePart;
+    if (!/[a-z]/i.test(left)) return false;
+    if (!looksLikeFoodOrDrink(left)) return false;
+    return true;
+  });
+  if (start < 0) return { start: -1, end: -1 };
+  let end = start;
+  for (let i = start; i < lines.length; i++) {
+    const l = lines[i].toLowerCase();
+    if (/(sub-?total|iva|impuesto|^total\b|total a pagar|importe total)/i.test(l)) {
+      end = i - 1;
+      break;
+    }
+    end = i;
+  }
+  dbgNote(`Ventana productos ${start}..${end}`);
+  return { start, end };
+}
+function parseItemsLocal(lines, win) {
+  if (win.start < 0 || win.end < 0 || win.end < win.start) return [];
+  const out = [];
+  const pushItem = (name, qty, price) => {
+    if (!name || price == null || price <= 0) return;
+    name = name
+      .replace(/(?:^|\s)(?:x\s*)?\d{1,2}(?:\s*[x×])?(?:\s|$)/gi, " ")
+      .replace(/\s{2,}/g, " ")
+      .replace(/[.:,-]\s*$/, "")
+      .trim();
+    if (!looksLikeFoodOrDrink(name)) {
+      dbgNote(`Descartado (no-food): "${name}"`);
+      return;
+    }
+    out.push({ name, qty: qty || 1, price });
+  };
+  for (let i = win.start; i <= win.end; i++) {
+    const l = lines[i];
+    if (NOT_PRODUCT_RX.test(l)) continue;
+    const cnp = parseQtyNamePrice(l);
+    if (cnp) { pushItem(cnp.name, cnp.qty, cnp.price); continue; }
+    const end = endsWithPrice(l);
+    if (end) { pushItem(end.namePart, 1, end.price); }
+  }
+  const comp = [];
+  out.forEach((it) => {
+    const j = comp.findIndex((x) => x.name.toLowerCase() === it.name.toLowerCase());
+    if (j >= 0) {
+      comp[j].qty += it.qty;
+      comp[j].price = +(comp[j].price + it.price).toFixed(2);
+    } else comp.push({ ...it });
+  });
+  dbgNote(`Items locales: ${comp.length}`);
+  return comp;
+}
+
+/* ====== total / folio / fecha ====== */
+function detectGrandTotal(lines) {
+  const isCard = (s) => /\b(visa|master|amex|tarjeta|card)\b/i.test(s);
+  const TOTAL_RX = /(total( a pagar)?|importe total|total mxn|total con propina)\b/i;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const l = lines[i];
+    if (isCard(l)) continue;
+    if (TOTAL_RX.test(l) && !/sub|iva|imp\.?t|impt|impuesto/i.test(l)) {
+      const mm = l.match(/(\$?\s*[0-9]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})|\$?\s*\d+(?:[.,]\d{2}))/g);
+      if (mm && mm.length) {
+        const v = normalizeNum(mm[mm.length - 1]);
+        if (v != null) {
+          dbgNote(`Total (TOTAL_RX): ${v}`);
+          return v;
+        }
+      }
+    }
+  }
+  const nums = [];
+  lines.forEach((l) => {
+    if (isCard(l)) return;
+    const mm = l.match(/(\$?\s*[0-9]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})|\$?\s*\d+(?:[.,]\d{2}))/g);
+    if (mm) mm.forEach((v) => { const p = normalizeNum(v); if (p != null) nums.push(p); });
+  });
+  if (nums.length) {
+    const t = Math.max(...nums);
+    dbgNote(`Total (máximo): ${t}`);
+    return t;
+  }
+  dbgNote("Total no encontrado");
+  return null;
+}
+function extractFolio(lines) {
+  const isDate = (s) => /(\d{1,2})[\/\-.](\d{1,2})[\/\-.](20\d{2})/.test(s);
+  const isTime = (s) => /(\d{1,2}):(\d{2})\s*(am|pm)?/i.test(s);
+  const iD = lines.findIndex(isDate);
+  const iT = lines.findIndex(isTime);
+  const iM = lines.findIndex((s) => /\bmesero\b|\bmesa\b|\bclientes?\b/i.test(s));
+  const anchor = (iD >= 0 || iT >= 0) ? Math.max(iD, iT) : -1;
+  const from = Math.max(iM >= 0 ? iM : 0, anchor >= 0 ? anchor : 0);
+  const to = Math.min(lines.length - 1, from + 6);
+  const pick5 = (s) => {
+    if (/cp\s*\d{5}/i.test(s)) return null;
+    const m = s.match(/\b(\d{5})\b/g);
+    return m ? m[m.length - 1] : null;
+  };
+  for (let i = from; i <= to; i++) {
+    const c = pick5(lines[i]);
+    if (c) { dbgNote(`Folio 5d detectado @${i}: ${c}`); return c; }
+  }
+  for (let i = 0; i < Math.min(15, lines.length); i++) {
+    const m = lines[i].match(/\b(\d{3,7})\b/);
+    if (m) { dbgNote(`Folio alterno @${i}: ${m[1]}`); return m[1]; }
+  }
+  dbgNote("Folio no encontrado");
+  return null;
+}
+function extractDateISO(text) {
+  const m = String(text || "").match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](20\d{2})/);
+  if (!m) return "";
+  let d = +m[1], mo = +m[2], y = +m[3];
+  if (d <= 12 && mo > 12) [d, mo] = [mo, d];
+  return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+/* ====== PREPROCESADO IMAGEN ====== */
+async function preprocessImage(file) {
+  const bmp = await createImageBitmap(file);
+  let w = bmp.width, h = bmp.height, rotate = false;
+  if (w > h * 1.6) rotate = true;
+  const targetH = 2800;
+  const scale = Math.max(1.4, Math.min(3.2, targetH / (rotate ? w : h)));
+  const c = document.createElement("canvas");
+  if (rotate) { c.width = Math.round(h * scale); c.height = Math.round(w * scale); }
+  else { c.width = Math.round(w * scale); c.height = Math.round(h * scale); }
+  const ctx = c.getContext("2d");
+  ctx.filter = "grayscale(1) contrast(1.35) brightness(1.05)";
+  if (rotate) {
+    ctx.translate(c.width / 2, c.height / 2);
+    ctx.rotate(Math.PI / 2);
+    ctx.drawImage(bmp, -w * scale / 2, -h * scale / 2, w * scale, h * scale);
+  } else {
+    ctx.drawImage(bmp, 0, 0, c.width, c.height);
+  }
+  if (typeof cv !== "undefined" && cv?.Mat) {
+    try {
+      let src = cv.imread(c);
+      let gray = new cv.Mat();
+      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+      let bw = new cv.Mat();
+      cv.adaptiveThreshold(gray, bw, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 35, 5);
+      cv.imshow(c, bw);
+      src.delete(); gray.delete(); bw.delete();
+    } catch (e) {
+      console.warn("OpenCV preprocess falló:", e);
+    }
+  }
+  return c;
+}
+
+/* ====== Tesseract ====== */
+async function runTesseract(canvas) {
+  const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.97));
+  const { data } = await Tesseract.recognize(blob, "spa+eng", {
+    tessedit_pageseg_mode: "6",
+    preserve_interword_spaces: "1",
+    user_defined_dpi: "360",
+    tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-:#/$., ",
+  });
+  return data.text || "";
+}
+
+/* ====== IA (con badge y logs) ====== */
+async function callOpenAI(rawText) {
+  if (!OPENAI_API_KEY && !OPENAI_PROXY_ENDPOINT) {
+    setIABadge('err', '(sin clave/proxy)');
+    throw new Error("No hay API KEY ni proxy configurado");
+  }
+
+  const sys = `
+Eres un parser de tickets de Applebee's (México).
+Debes responder SOLO JSON válido con este shape exacto:
+{
+  "folio": "string (5-7 dígitos o vacío si no se ve)",
+  "fecha": "YYYY-MM-DD (o vacío)",
+  "total": number,
+  "items": [{"name":"string","qty":number,"price":number}]
+}
+Reglas:
+- No inventes datos. Si no ves algo, devuelve vacío (folio/fecha) o 0/[].`
+    + `
+- "items" solo comida/bebida (excluye IVA/subtotal/propina/pagos).
+- qty >= 1. price = importe de línea; si no se ve, usa 0.
+- Responde SOLO JSON (sin texto extra).
+`;
+  const user = `Texto OCR sin modificar:\n${rawText}\n\nResponde SOLO el JSON indicado.`;
+
+  const started = performance.now();
+  setIABadge(null, 'llamando…');
+
+  try {
+    if (OPENAI_PROXY_ENDPOINT) {
+      const resp = await fetch(OPENAI_PROXY_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: rawText, sys })
+      });
+      const took = Math.round(performance.now() - started);
+      if (!resp.ok) {
+        const txt = await resp.text().catch(()=> '');
+        setIABadge('err', `HTTP ${resp.status}`);
+        dbgNote(`IA(proxy) ERROR ${resp.status} en ${took}ms: ${txt}`);
+        throw new Error("Proxy IA respondió error: " + resp.status);
+      }
+      const j = await resp.json();
+      setIABadge('ok', `${took}ms`);
+      dbgNote(`IA(proxy) OK en ${took}ms`);
+      console.info('[IA][proxy] respuesta:', j);
+      return j;
+    }
+
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: sys },
+          { role: "user", content: user }
+        ],
+        temperature: 0.1,
+        response_format: { type: "json_object" }
+      })
+    });
+
+    const took = Math.round(performance.now() - started);
+    if (!resp.ok) {
+      const txt = await resp.text().catch(()=> '');
+      setIABadge('err', `HTTP ${resp.status}`);
+      dbgNote(`IA(Direct) ERROR ${resp.status} en ${took}ms: ${txt}`);
+      throw new Error("OpenAI error: " + txt);
+    }
+
+    const data = await resp.json();
+    setIABadge('ok', `${took}ms`);
+    dbgNote(`IA(Direct) OK en ${took}ms`);
+    const content = data.choices?.[0]?.message?.content || "{}";
+    const parsed = JSON.parse(content);
+    console.info('[IA][direct] respuesta:', parsed);
+    return parsed;
+  } catch (e) {
+    setIABadge('err', 'excepción');
+    throw e;
+  }
+}
+
+/* ====== Proceso principal ====== */
+async function processTicketWithIA(file) {
+  const statusEl = document.getElementById("ocrStatus");
+  if (statusEl) { statusEl.textContent = "🕐 Escaneando ticket…"; statusEl.className = "validacion-msg"; }
+
+  try {
+    DBG.notes = []; DBG.lines = [];
+
+    const canvas = await preprocessImage(file);
+    const text = await runTesseract(canvas);
+    dbgNote("OCR listo, longitud: " + text.length);
+
+    // 🔹 Nuevo: avisar al front del texto crudo para quien lo quiera usar (registrar.js)
+    document.dispatchEvent(new CustomEvent("ocr:text", { detail: { text } }));
+
+    let result = null;
+    try {
+      result = await callOpenAI(text);
+      dbgNote("IA respondió OK");
+      if (result && typeof result === "object") {
+        const okFields = [
+          result.folio ? 'folio' : null,
+          result.fecha ? 'fecha' : null,
+          (typeof result.total === 'number' && result.total>0) ? 'total' : null,
+          (Array.isArray(result.items) && result.items.length>0) ? 'items' : null
+        ].filter(Boolean);
+        if (statusEl) statusEl.textContent = `IA OK (${okFields.join(', ')||'sin campos'})… afinando con parser local.`;
+      }
+    } catch (iaErr) {
+      console.warn("IA falló, usando parser local:", iaErr);
+    }
+
+    let folio = "", fecha = "", total = null, items = [];
+    if (result && typeof result === "object") {
+      folio = result.folio || "";
+      fecha = result.fecha || "";
+      total = typeof result.total === "number" ? result.total : normalizeNum(result.total);
+      items = Array.isArray(result.items) ? result.items : [];
+    }
+
+    // Parser local (si falta algo)
+    let lines = splitLines(text);
+    lines = mergeBrokenPriceLinesV2(lines);
+    const win = findProductsWindow(lines);
+    const localItems = parseItemsLocal(lines, win);
+    const localTotal = detectGrandTotal(lines);
+    const localFolio = extractFolio(lines);
+    const localFecha = extractDateISO(text);
+
+    if (!folio) folio = localFolio || "";
+    if (!fecha) fecha = localFecha || "";
+    if (!total) total = localTotal != null ? localTotal : null;
+    if (!items.length) items = localItems;
+
+    // Sanitiza items
+    const finalItems = (items || []).map(it => {
+      const name = String(it.name || "").trim();
+      const qty = it.qty ? parseInt(it.qty, 10) || 1 : 1;
+      const price = typeof it.price === "number" ? it.price : normalizeNum(it.price);
+      return { name, qty, price };
+    }).filter(it => {
+      const n = String(it.name || "").toLowerCase();
+      if (!n) return false;
+      if (NOT_PRODUCT_RX.test(n)) return false;
+      if (CODEY_RX.test(n)) return false;
+      if (!looksLikeFoodOrDrink(n)) return false;
+      return true;
+    });
+
+    // A la UI
+    const iNum = document.getElementById("inputTicketNumero");
+    const iFecha = document.getElementById("inputTicketFecha");
+    const iTotal = document.getElementById("inputTicketTotal");
+
+    if (iNum)  { iNum.value  = folio || ""; }
+    if (iFecha && fecha) { iFecha.value = fecha; }
+    if (iTotal && total != null) { iTotal.value = total.toFixed(2); iTotal.disabled = false; }
+
+    const payload = finalItems.map(it => ({
+      name: it.name,
+      qty: it.qty || 1,
+      price: typeof it.price === "number" ? it.price : null
+    }));
+
+    // productos para registrar.js
+    document.dispatchEvent(new CustomEvent("ocr:productos", { detail: payload }));
+
+    // opcional: también mandamos todo el objeto ya parseado
+    document.dispatchEvent(new CustomEvent("ocr:parsed", {
+      detail: { folio, fecha, total, items: finalItems }
+    }));
+
+    if (statusEl) {
+      statusEl.className = "validacion-msg ok";
+      statusEl.textContent = "✓ Ticket procesado. Verifica y presiona “Registrar”.";
+    }
+
+    dbgDump();
+
+    // 🔹 IMPORTANTE para registrar.js: regresamos info estructurada
+    return { text, folio, fecha, total, items: finalItems };
+  } catch (e) {
+    console.error(e);
+    const statusEl2 = document.getElementById("ocrStatus");
+    if (statusEl2) {
+      statusEl2.className = "validacion-msg err";
+      statusEl2.textContent = "❌ No pude leer el ticket. Intenta con mejor luz o que salga completo.";
+    }
+    alert("No se pudo leer el ticket. Vuelve a tomar la foto más cerca, recto y con buena luz.");
+    // para que registrar.js no truene:
+    return { text: "", folio: "", fecha: "", total: null, items: [] };
+  }
+}
+
+/* ====== Auto-OCR (sin botón) ====== */
+(function bindAutoOCR(){
+  const fileInput = document.getElementById('ticketFile');
+  if (!fileInput) return;
+  fileInput.addEventListener('change', async (e)=>{
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const statusEl = document.getElementById("ocrStatus");
+    if (statusEl) { statusEl.textContent = "🕐 Preparando OCR…"; statusEl.className = "validacion-msg"; }
+    try { await processTicketWithIA(f); }
+    catch { /* el catch interno ya muestra mensajes */ }
+  });
+})();
+
+// 🔹 Muy importante: exponer la función globalmente para registrar.js
+window.processTicketWithIA = processTicketWithIA;
+
