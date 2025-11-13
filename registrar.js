@@ -102,6 +102,30 @@
     return seededRandInt(seed,minP,maxP);
   }
 
+  // ===== Helper números (igual que en ocr.js) =====
+  function normalizeMoney(raw) {
+    if (!raw) return null;
+    let s = String(raw).replace(/[^\d.,-]/g, "").trim();
+    if (!s) return null;
+
+    // Tiene coma y punto -> decidir cuál es decimal
+    if (s.includes(",") && s.includes(".")) {
+      if (s.lastIndexOf(".") > s.lastIndexOf(",")) {
+        // 1,234.56  -> quitar comas
+        s = s.replace(/,/g, "");
+      } else {
+        // 1.234,56  -> quitar puntos y dejar coma como decimal
+        s = s.replace(/\./g, "").replace(",", ".");
+      }
+    } else if (s.includes(",")) {
+      // Solo coma: si hay ",dd" al final, es decimal; si no, miles
+      const m = s.match(/,\d{2}$/);
+      s = m ? s.replace(",", ".") : s.replace(/,/g, "");
+    }
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? +n.toFixed(2) : null;
+  }
+
   // ===== Helpers UI =====
   function setStatus(msg, type='') {
     if (!ocrStatus) return;
@@ -266,46 +290,39 @@
     for (let i=0; i<lines.length; i++) {
       const l = lines[i];
       if (/total\b/i.test(l) && !/propina|visa|master|tarjeta/i.test(l)) {
-        // línea "Total 716.00"
         let m = l.match(rxMoney);
         if (!m && lines[i+1]) {
-          // a veces el importe está en la siguiente línea
           m = lines[i+1].match(rxMoney);
         }
         if (m) {
-          const numStr = m[1] || m[0];
-          total = parseFloat(numStr.replace(/\./g,'').replace(',', '.'));
-          break;
+          const num = normalizeMoney(m[1] || m[0]);
+          if (num != null) {
+            total = num;
+            break;
+          }
         }
       }
     }
     // Fallback: usa el mayor importe del ticket si no encontró la línea "Total"
     if (total == null) {
-      const all = [...text.matchAll(rxMoneyG)].map(m => m[1]);
-      if (all.length) {
-        const nums = all.map(s => parseFloat(s.replace(/\./g,'').replace(',','.')))
-                        .filter(v => !Number.isNaN(v));
-        if (nums.length) total = Math.max(...nums);
-      }
+      const all = [...text.matchAll(rxMoneyG)].map(m => m[1] || m[0]);
+      const nums = all.map(normalizeMoney).filter(n => n != null);
+      if (nums.length) total = Math.max(...nums);
     }
 
     // ========= PRODUCTOS (flechas verdes) =========
     const products = [];
     const promRx   = /(2x1|promo|promoción|promocion|desayunos? ?2x1)/i;
 
-    // 1) localizar la línea de "Sub-total"
     const subIdx = lines.findIndex(l => /sub[\s-]?total/i.test(l));
     if (subIdx > 0) {
-      // 2) recorrer hacia arriba desde la línea anterior a "Sub-total"
       let firstItemIdx = subIdx - 1;
       while (firstItemIdx >= 0) {
         const line = lines[firstItemIdx];
-        // si llegamos a encabezados, paramos
         if (/mesero|mesa|clientes?|reimpresion/i.test(line)) {
           firstItemIdx++;
           break;
         }
-        // si NO tiene precio ni la siguiente línea, cortamos
         const hasPrice   = rxMoney.test(line);
         const nextPrice  = lines[firstItemIdx+1] && rxMoney.test(lines[firstItemIdx+1]);
         if (!hasPrice && !nextPrice) {
@@ -316,7 +333,6 @@
       }
       if (firstItemIdx < 0) firstItemIdx = 0;
 
-      // 3) de firstItemIdx hasta la línea anterior a "Sub-total"
       for (let i = firstItemIdx; i < subIdx; i++) {
         let name = lines[i];
         if (!name) continue;
@@ -327,11 +343,10 @@
         // caso A: "Nombre .......... 149.00"
         let m = name.match(rxMoney);
         if (m) {
-          const numStr = m[1] || m[0];
-          const price  = parseFloat(numStr.replace(/\./g,'').replace(',','.'));
+          const price = normalizeMoney(m[1] || m[0]);
           name = name.replace(rxMoney,'').replace(/[.\-]+$/,'').trim();
           name = fixProductName(name);
-          if (name && !promRx.test(name)) {
+          if (name && price != null && !promRx.test(name)) {
             products.push({ name, qty:1, price });
           }
           continue;
@@ -341,10 +356,9 @@
         if (i+1 < subIdx && rxMoney.test(lines[i+1])) {
           const mm = lines[i+1].match(rxMoney);
           if (mm) {
-            const numStr = mm[1] || mm[0];
-            const price  = parseFloat(numStr.replace(/\./g,'').replace(',','.'));
+            const price = normalizeMoney(mm[1] || mm[0]);
             name = fixProductName(name.replace(/[.\-]+$/,'').trim());
-            if (name && !promRx.test(name)) {
+            if (name && price != null && !promRx.test(name)) {
               products.push({ name, qty:1, price });
             }
             i++; // saltamos la línea de precio
@@ -388,9 +402,12 @@
       iTotal.disabled = false;
     }
 
-    let prods = Array.isArray(parsed.productos) ? parsed.productos : [];
-    if (!prods.length && Array.isArray(fallbackItems) && fallbackItems.length){
+    // 🔹 PRIORIDAD: items que ya mandó ocr.js (IA + parser local de ahí)
+    let prods = [];
+    if (Array.isArray(fallbackItems) && fallbackItems.length){
       prods = fallbackItems;
+    } else if (Array.isArray(parsed.productos) && parsed.productos.length){
+      prods = parsed.productos;
     }
 
     if (prods.length){
