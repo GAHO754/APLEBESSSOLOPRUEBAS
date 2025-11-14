@@ -25,21 +25,65 @@
       --bot-panel: #0f172a;
       --bot-texto: #e2e8f0;
     }
+
+    /* Botón flotante con imagen */
     #chatbot-toggle {
       position: fixed;
       bottom: 20px; 
       right: 20px;
-      width: 56px; 
-      height: 56px;
+      width: 64px; 
+      height: 64px;
       border-radius: 9999px;
-      background: var(--bot-primario);
-      display: grid; 
-      place-items: center;
       cursor: pointer;
-      box-shadow: 0 10px 30px rgba(0,0,0,.45);
-      font-size: 26px;
       z-index: 9999;
+      display: grid;
+      place-items: center;
+      background: transparent;
     }
+    #chatbot-toggle img {
+      width: 100%;
+      height: 100%;
+      border-radius: 9999px;
+      object-fit: cover;
+      box-shadow: 0 14px 35px rgba(0,0,0,.55);
+      border: 2px solid rgba(248,250,252,0.9);
+    }
+
+    /* Globo de mensaje junto al botón */
+    #chatbot-hint {
+      position: fixed;
+      bottom: 40px;
+      right: 95px;
+      max-width: 220px;
+      background: #0f172a;
+      color: #e5e7eb;
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      line-height: 1.3;
+      box-shadow: 0 14px 35px rgba(15,23,42,0.8);
+      border: 1px solid rgba(148,163,184,0.7);
+      opacity: 0;
+      transform: translateY(8px);
+      pointer-events: none;
+      transition: opacity .35s ease, transform .35s ease;
+      z-index: 9998;
+    }
+    #chatbot-hint::after {
+      content: "";
+      position: absolute;
+      right: -6px;
+      bottom: 16px;
+      border-width: 6px;
+      border-style: solid;
+      border-color: transparent transparent transparent #0f172a;
+    }
+    #chatbot-hint.show {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
     #chatbot-box {
       position: fixed;
       bottom: 90px; 
@@ -57,6 +101,7 @@
       box-shadow: 0 20px 50px rgba(15,23,42,0.7);
     }
     #chatbot-box.hidden { display: none; }
+
     #chatbot-header {
       padding: 10px 14px;
       background: rgba(15,23,42,.95);
@@ -166,6 +211,10 @@
       #chatbot-toggle {
         bottom: 16px;
         right: 16px;
+      }
+      #chatbot-hint {
+        right: 90px;
+        max-width: 190px;
       }
     }
   </style>
@@ -299,6 +348,7 @@
 
   <!-- Proxy IA (Firebase Functions Gen2) -->
   <script>
+    // Usa la que prefieras (Functions clásica o Cloud Run directa)
     window.OPENAI_PROXY_ENDPOINT = "https://ocr-3wbtuycfvq-uc.a.run.app";
   </script>
 
@@ -319,7 +369,17 @@
   </script>
 
   <!-- ====== BOT flotante de ayuda para tickets ====== -->
-  <div id="chatbot-toggle">💬</div>
+
+  <!-- Globo de mensaje inicial -->
+  <div id="chatbot-hint">
+    👋 Hola, ¿quieres que te ayude a escanear tu ticket?
+  </div>
+
+  <!-- Botón flotante con imagen NUEVA -->
+  <div id="chatbot-toggle">
+    <!-- Cambia "bot-nuevo.png" por el nombre real de tu imagen -->
+    <img src="manzanas.png" alt="Asistente de tickets">
+  </div>
 
   <div id="chatbot-box" class="hidden">
     <div id="chatbot-header">
@@ -355,23 +415,34 @@
     const messagesDiv = document.getElementById("chatbot-messages");
     const form = document.getElementById("chatbot-form");
     const input = document.getElementById("chatbot-input");
+    const hint = document.getElementById("chatbot-hint");
 
     const btnBotAdjuntar = document.getElementById("botAdjuntarTicket");
     const btnBotTomarFoto = document.getElementById("botTomarFoto");
 
-    // Historial con contexto específico de tickets
+    // Historial con mensaje inicial especial
     const chatHistory = [
       {
         role: "assistant",
         content:
-          "Hola 👋 soy tu asistente para registrar tu ticket.\n\n" +
+          "Hola 👋 ¿quieres que te ayude a escanear tu ticket?\n\n" +
           "1) Toca en 'Adjuntar ticket' o 'Tomar foto'.\n" +
-          "2) Yo escanearé el ticket y llenar\u00e9: número, fecha, productos y total.\n" +
-          "3) Solo revisa y presiona 'Registrar Ticket'.\n\n" +
-          "Si algo no se llena bien, dime qué dato falló y te ayudo."
+          "2) Yo escanearé el ticket y llenaré: número, fecha, productos y total.\n" +
+          "3) Solo revisa y presiona 'Registrar Ticket'."
       }
     ];
     renderChat();
+
+    // Mostrar el globo después de 1.5s
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        hint?.classList.add('show');
+      }, 1500);
+      // ocultarlo automático después de 10s
+      setTimeout(() => {
+        if (hint) hint.classList.remove('show');
+      }, 11000);
+    });
 
     // Abrir/cerrar bot
     toggle.onclick = () => {
@@ -379,6 +450,8 @@
       if (!box.classList.contains("hidden")) {
         input.focus();
       }
+      // al abrir/cerrar, ocultamos el globito
+      if (hint) hint.classList.remove('show');
     };
 
     // Acciones del BOT que disparan tu OCR real
@@ -387,7 +460,7 @@
       if (fi) fi.click();  // esto dispara el mismo flujo que el botón normal
       chatHistory.push({
         role: "assistant",
-        content: "Perfecto 😊. Elige la foto de tu ticket y la estoy escaneando…"
+        content: "Perfecto 😊. Elige la foto de tu ticket y lo estoy escaneando…"
       });
       renderChat();
     });
