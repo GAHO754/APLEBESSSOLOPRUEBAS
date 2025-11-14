@@ -11,11 +11,14 @@
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
   <style>
+    /* Compacta un poco el header aquí (opcional) */
     .top-bar{height:56px;padding:10px 12px}
     .applebees-title{font-size:20px;margin:0}
+    @media (max-width:430px){
+      /* sin centro, no hace falta espacio extra en móvil */
+    }
 
-    /* ==================== BOT FLOTANTE ===================== */
-
+    /* ====== BOT flotante ====== */
     :root {
       --bot-primario: #f43f5e;
       --bot-bg: #020617;
@@ -23,157 +26,221 @@
       --bot-texto: #e2e8f0;
     }
 
-    /* Botón redondo flotante */
+    /* Botón flotante con imagen */
     #chatbot-toggle {
       position: fixed;
-      bottom: 20px;
+      bottom: 20px; 
       right: 20px;
-      width: 65px;
-      height: 65px;
-      border-radius: 50%;
-      background-size: cover;
-      background-position: center;
-      background-image: url('manzanas.png'); /* ⚠️ AQUÍ PON TU IMAGEN NUEVA REDONDA */
+      width: 64px; 
+      height: 64px;
+      border-radius: 9999px;
       cursor: pointer;
-      box-shadow: 0 10px 30px rgba(0,0,0,.4);
       z-index: 9999;
-      transition: transform .2s ease;
+      display: grid;
+      place-items: center;
+      background: transparent;
     }
-    #chatbot-toggle:hover {
-      transform: scale(1.07);
+    #chatbot-toggle img {
+      width: 100%;
+      height: 100%;
+      border-radius: 9999px;
+      object-fit: cover;
+      box-shadow: 0 14px 35px rgba(0,0,0,.55);
+      border: 2px solid rgba(248,250,252,0.9);
     }
 
-    /* Caja del chatbot */
+    /* Globo de mensaje junto al botón */
+    #chatbot-hint {
+      position: fixed;
+      bottom: 40px;
+      right: 95px;
+      max-width: 220px;
+      background: #0f172a;
+      color: #e5e7eb;
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      line-height: 1.3;
+      box-shadow: 0 14px 35px rgba(15,23,42,0.8);
+      border: 1px solid rgba(148,163,184,0.7);
+      opacity: 0;
+      transform: translateY(8px);
+      pointer-events: none;
+      transition: opacity .35s ease, transform .35s ease;
+      z-index: 9998;
+    }
+    #chatbot-hint::after {
+      content: "";
+      position: absolute;
+      right: -6px;
+      bottom: 16px;
+      border-width: 6px;
+      border-style: solid;
+      border-color: transparent transparent transparent #0f172a;
+    }
+    #chatbot-hint.show {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
     #chatbot-box {
       position: fixed;
-      bottom: 95px;
+      bottom: 90px; 
       right: 20px;
-      width: 320px;
-      height: 430px;
-      background: #0f172acc;
-      border: 1px solid rgba(255,255,255,.15);
+      width: 320px; 
+      height: 440px;
+      background: rgba(15, 23, 42, 0.97);
+      border: 1px solid rgba(148,163,184,0.4);
       border-radius: 18px;
-      backdrop-filter: blur(10px);
+      overflow: hidden;
       display: flex;
       flex-direction: column;
-      overflow: hidden;
+      backdrop-filter: blur(10px);
       z-index: 9999;
-      animation: pop .25s ease;
+      box-shadow: 0 20px 50px rgba(15,23,42,0.7);
     }
+    #chatbot-box.hidden { display: none; }
 
-    @keyframes pop {
-      from { transform: scale(.85); opacity: 0; }
-      to   { transform: scale(1); opacity: 1; }
-    }
-
-    #chatbot-box.hidden {
-      display: none;
-    }
-
-    /* Header */
     #chatbot-header {
       padding: 10px 14px;
-      background: #0f172af2;
+      background: rgba(15,23,42,.95);
       font-weight: 600;
+      font-size: 14px;
+      border-bottom: 1px solid rgba(148,163,184,0.4);
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      color: white;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    #chatbot-header span.small {
+      font-weight: 400;
+      font-size: 11px;
+      color: #9ca3af;
     }
 
-    /* Botón cerrar/minimizar */
-    #chatbot-close {
-      border: none;
-      background: transparent;
-      color: #aaa;
-      cursor: pointer;
-      font-size: 18px;
-      padding: 3px 6px;
-      border-radius: 50%;
+    #chatbot-actions {
+      padding: 8px 10px 4px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      border-bottom: 1px solid rgba(148,163,184,0.3);
+      background: rgba(15,23,42,.9);
     }
-    #chatbot-close:hover {
-      background: rgba(255,255,255,.12);
-      color: #fff;
+    .bot-action-btn {
+      flex: 1 1 48%;
+      border-radius: 9999px;
+      border: 1px solid rgba(148,163,184,0.6);
+      background: rgba(15,23,42,0.9);
+      color: #e5e7eb;
+      font-size: 11px;
+      padding: 4px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .bot-action-btn span.icon {
+      font-size: 14px;
+    }
+    .bot-action-btn:active {
+      transform: scale(0.97);
     }
 
     #chatbot-messages {
       flex: 1;
       overflow-y: auto;
-      padding: 10px;
+      padding: 8px 10px;
       display: flex;
       flex-direction: column;
-      gap: 8px;
-      color: var(--bot-texto);
+      gap: 6px;
       font-size: 13px;
     }
-
     .msg {
       max-width: 90%;
-      padding: 7px 10px;
+      padding: 6px 10px;
       border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.3;
       white-space: pre-wrap;
-      line-height: 1.35;
     }
-
     .msg.user {
       background: #22d3ee;
-      color: #000;
+      color: #0f172a;
       align-self: flex-end;
     }
-
     .msg.assistant {
-      background: rgba(255,255,255,.1);
-      border: 1px solid rgba(255,255,255,.15);
+      background: rgba(15,23,42,.7);
+      border: 1px solid rgba(148,163,184,.5);
+      color: var(--bot-texto);
     }
-
     #chatbot-form {
+      border-top: 1px solid rgba(148,163,184,0.4);
       display: flex;
-      border-top: 1px solid rgba(255,255,255,.1);
-      background: #0f172af2;
+      background: rgba(15,23,42,0.98);
     }
-
     #chatbot-input {
       flex: 1;
-      border: none;
       background: transparent;
-      padding: 10px;
+      border: 0;
       color: white;
+      padding: 8px 10px;
       outline: none;
       font-size: 13px;
     }
-
+    #chatbot-input::placeholder {
+      color: #6b7280;
+    }
     #chatbot-send {
-      border: none;
       background: transparent;
-      color: white;
-      font-size: 18px;
-      padding: 0 12px;
+      border: 0;
+      color: #e5e7eb;
+      padding: 0 10px;
       cursor: pointer;
+      font-size: 16px;
+    }
+
+    @media (max-width: 480px) {
+      #chatbot-box {
+        right: 10px;
+        width: calc(100% - 20px);
+        max-width: 360px;
+      }
+      #chatbot-toggle {
+        bottom: 16px;
+        right: 16px;
+      }
+      #chatbot-hint {
+        right: 90px;
+        max-width: 190px;
+      }
     }
   </style>
 </head>
-
 <body class="bg-animated">
-
-  <!-- ================= HEADER ORIGINAL ================== -->
+  <!-- ======= HEADER SIN SALUDO ======= -->
   <header class="top-bar">
     <div class="left-section"><h1 class="applebees-title">Applebee’s</h1></div>
-    <div class="right-section"><a class="btn-secondary" href="panel.html">← Regresar</a></div>
+    <div class="right-section">
+      <a class="btn-secondary" href="panel.html">← Regresar</a>
+    </div>
   </header>
-
-  <!-- ========================================================= -->
-  <!--   TODO TU FORMULARIO COMPLETO – SIN CAMBIOS              -->
-  <!-- ========================================================= -->
-
+  
   <main class="page">
     <section class="card panel-option" id="subida-ticket">
       <h2>📸 Sube primero tu ticket (obligatorio)</h2>
 
+      <!-- =========== SUBIDA DE IMAGEN =========== -->
       <div class="upload-area">
         <label for="ticketFile">📎 Imagen del ticket</label>
 
-        <div class="dropzone" id="dropzone"><p>Arrastra y suelta la imagen aquí</p></div>
+        <div class="dropzone" id="dropzone" aria-label="Arrastra tu ticket aquí">
+          <p>Arrastra y suelta la imagen aquí</p>
+        </div>
 
+        <!-- input real -->
         <input type="file" id="ticketFile" accept="image/*" style="display:none;" />
 
         <div class="upload-actions">
@@ -182,118 +249,165 @@
         </div>
       </div>
 
-      <!-- MODAL DE CÁMARA -->
-      <div class="camera-modal" id="cameraModal">
+      <!-- =========== MODAL CÁMARA =========== -->
+      <div class="camera-modal" id="cameraModal" aria-hidden="true">
         <div class="camera-box">
           <div class="camera-header">
             <h3>Tomar foto del ticket</h3>
-            <button id="btnCerrarCamara" class="btn-secondary">Cerrar</button>
+            <button id="btnCerrarCamara" class="btn-secondary" type="button">Cerrar</button>
           </div>
           <video id="cameraVideo" playsinline autoplay></video>
           <div class="camera-actions">
-            <button id="btnCapturar" class="btn-cta">Capturar</button>
+            <button id="btnCapturar" class="btn-cta" type="button">Capturar</button>
           </div>
         </div>
       </div>
 
+      <!-- =========== ESTADO OCR + DEBUG =========== -->
       <div id="ocrStatus" class="validacion-msg"></div>
       <div id="iaBadge" style="
         display:inline-block; margin-top:6px; padding:4px 8px; border-radius:8px;
         font-size:12px; background:#444; color:#fff;">IA: esperando…</div>
 
+      <!-- Panel de depuración OCR -->
       <pre id="ocrDebug" style="
-        background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.08);
-        padding: 10px; border-radius: 10px; font-size: 12px;
-        max-height: 200px; overflow: auto; display: none;"></pre>
+        background: rgba(0,0,0,.35);
+        border: 1px solid rgba(255,255,255,.08);
+        padding: 10px;
+        border-radius: 10px;
+        font-size: 12px;
+        max-height: 200px;
+        overflow: auto;
+        white-space: pre-wrap;
+        margin-top: 10px;
+        display: none;
+      "></pre>
 
       <hr class="divider">
 
-      <!-- FORMULARIO DE DATOS -->
+      <!-- =========== FORMULARIO DE DATOS =========== -->
       <div class="upload-area">
         <div class="grid-2">
           <div>
-            <label>Número de ticket</label>
-            <input type="text" id="inputTicketNumero" disabled />
+            <label for="inputTicketNumero">Número de ticket</label>
+            <input type="text" id="inputTicketNumero" placeholder="Ej. 123456" disabled />
           </div>
           <div>
-            <label>Fecha del ticket</label>
+            <label for="inputTicketFecha">Fecha del ticket</label>
             <input type="date" id="inputTicketFecha" disabled />
           </div>
         </div>
 
-        <label>Productos detectados</label>
+        <label>Productos detectados / consumidos</label>
         <div id="listaProductos" class="lista-productos"></div>
 
         <div class="producto-inputs">
-          <input type="text" id="nuevoProducto" placeholder="Producto" disabled />
-          <input type="number" id="nuevaCantidad" placeholder="Cant." min="1" disabled />
-          <button id="btnAgregarProducto" class="btn-primary" disabled>➕</button>
+          <input type="text" id="nuevoProducto" placeholder="Agregar manualmente (si faltó algo)" disabled />
+          <input type="number" id="nuevaCantidad" placeholder="Cantidad" min="1" disabled />
+          <button id="btnAgregarProducto" type="button" class="btn-primary" disabled>➕ Agregar</button>
         </div>
 
+        <!-- Puntos del ticket -->
         <div class="puntos-wrapper">
-          <h3>🏅 Puntos del ticket</h3>
+          <div class="puntos-header"><h3>🏅 Puntos del ticket (automático)</h3></div>
           <table class="tabla-puntos" id="tablaPuntos">
             <thead>
               <tr><th>Producto</th><th>Cant.</th><th>Puntos/u</th><th>Subtotal</th></tr>
             </thead>
             <tbody></tbody>
             <tfoot>
-              <tr><td colspan="3">Total</td><td><strong id="totalPuntos">0</strong> pts</td></tr>
+              <tr><td colspan="3" class="right">Total</td><td><strong id="totalPuntos">0</strong> pts</td></tr>
             </tfoot>
           </table>
         </div>
 
-        <label>Total pagado</label>
-        <input type="number" id="inputTicketTotal" disabled step="0.01" />
+        <label for="inputTicketTotal">Total pagado</label>
+        <input type="number" id="inputTicketTotal" step="0.01" placeholder="Ej. 249.90" disabled />
 
-        <button id="btnRegistrarTicket" class="btn-cta" disabled>Registrar Ticket</button>
+        <button id="btnRegistrarTicket" type="button" class="btn-cta" disabled>
+          <span>Registrar Ticket</span>
+        </button>
       </div>
 
-      <p id="ticketValidacion" class="validacion-msg"></p>
+      <div class="ticket-result">
+        <p id="ticketValidacion" class="validacion-msg"></p>
+      </div>
     </section>
   </main>
 
   <footer><p>© 2025 Great American Hospitality</p></footer>
 
-  <!-- FIREBASE -->
+  <!-- Firebase -->
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
   <script src="firebase-config.js"></script>
 
-  <!-- OPENCV -->
+  <!-- OpenCV (auto enderezado) -->
   <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
 
+  <!-- Proxy IA (Firebase Functions Gen2) -->
   <script>
+    // Usa la que prefieras (Functions clásica o Cloud Run directa)
     window.OPENAI_PROXY_ENDPOINT = "https://ocr-3wbtuycfvq-uc.a.run.app";
   </script>
 
-  <!-- OCR + LÓGICA -->
+  <!-- Lógica tuya -->
   <script src="ocr.js"></script>
   <script src="registrar.js"></script>
 
-  <!-- ==================== BOT ==================== -->
+  <!-- Toggle Debug (solo UI) -->
+  <script>
+    const btnDbg = document.getElementById('btnToggleDebug');
+    const preDbg = document.getElementById('ocrDebug');
+    btnDbg?.addEventListener('click', () => {
+      const showing = preDbg.style.display !== 'none';
+      preDbg.style.display = showing ? 'none' : 'block';
+      btnDbg.setAttribute('aria-expanded', String(!showing));
+      btnDbg.textContent = showing ? '🛠️ Mostrar depuración OCR' : '🛠️ Ocultar depuración OCR';
+    });
+  </script>
 
-  <div id="chatbot-toggle"></div>
+  <!-- ====== BOT flotante de ayuda para tickets ====== -->
+
+  <!-- Globo de mensaje inicial -->
+  <div id="chatbot-hint">
+    👋 Hola, ¿quieres que te ayude a escanear tu ticket?
+  </div>
+
+  <!-- Botón flotante con imagen NUEVA -->
+  <div id="chatbot-toggle">
+    <!-- Cambia "bot-nuevo.png" por el nombre real de tu imagen -->
+    <img src="manzanas.png" alt="Asistente de tickets">
+  </div>
 
   <div id="chatbot-box" class="hidden">
     <div id="chatbot-header">
       <div>
-        Asistente de tickets  
-        <div style="font-size:11px; color:#ccc;">¿Te ayudo a escanear tu ticket?</div>
+        Asistente de registro
+        <br><span class="small">Escaneo y dudas de tickets</span>
       </div>
-      <button id="chatbot-close">✕</button>
+    </div>
+
+    <!-- Botones para que el BOT dispare el escaneo -->
+    <div id="chatbot-actions">
+      <button type="button" class="bot-action-btn" id="botAdjuntarTicket">
+        <span class="icon">📎</span><span>Adjuntar ticket</span>
+      </button>
+      <button type="button" class="bot-action-btn" id="botTomarFoto">
+        <span class="icon">📷</span><span>Tomar foto</span>
+      </button>
     </div>
 
     <div id="chatbot-messages"></div>
-
     <form id="chatbot-form">
-      <input id="chatbot-input" placeholder="Escribe tu duda..." autocomplete="off" />
+      <input id="chatbot-input" placeholder="Pregunta sobre tu ticket..." autocomplete="off" />
       <button id="chatbot-send" type="submit">➤</button>
     </form>
   </div>
 
   <script>
+    // URL de tu bot en Render
     const API_URL = "https://bot-soporte-alejandro.onrender.com/chat";
 
     const toggle = document.getElementById("chatbot-toggle");
@@ -301,32 +415,67 @@
     const messagesDiv = document.getElementById("chatbot-messages");
     const form = document.getElementById("chatbot-form");
     const input = document.getElementById("chatbot-input");
-    const btnClose = document.getElementById("chatbot-close");
+    const hint = document.getElementById("chatbot-hint");
 
+    const btnBotAdjuntar = document.getElementById("botAdjuntarTicket");
+    const btnBotTomarFoto = document.getElementById("botTomarFoto");
+
+    // Historial con mensaje inicial especial
     const chatHistory = [
       {
         role: "assistant",
         content:
-          "👋 ¡Hola! Soy tu asistente.\n" +
-          "Puedo ayudarte a:\n" +
-          "• Escanear tu ticket\n" +
-          "• Detectar número, fecha y total\n" +
-          "• Revisar productos\n" +
-          "• Revisar puntos\n\n" +
-          "📸 Sube o toma foto de tu ticket y te ayudo."
+          "Hola 👋 ¿quieres que te ayude a escanear tu ticket?\n\n" +
+          "1) Toca en 'Adjuntar ticket' o 'Tomar foto'.\n" +
+          "2) Yo escanearé el ticket y llenaré: número, fecha, productos y total.\n" +
+          "3) Solo revisa y presiona 'Registrar Ticket'."
       }
     ];
     renderChat();
 
+    // Mostrar el globo después de 1.5s
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        hint?.classList.add('show');
+      }, 1500);
+      // ocultarlo automático después de 10s
+      setTimeout(() => {
+        if (hint) hint.classList.remove('show');
+      }, 11000);
+    });
+
+    // Abrir/cerrar bot
     toggle.onclick = () => {
-      box.classList.remove("hidden");
-      input.focus();
+      box.classList.toggle("hidden");
+      if (!box.classList.contains("hidden")) {
+        input.focus();
+      }
+      // al abrir/cerrar, ocultamos el globito
+      if (hint) hint.classList.remove('show');
     };
 
-    btnClose.onclick = () => {
-      box.classList.add("hidden");
-    };
+    // Acciones del BOT que disparan tu OCR real
+    btnBotAdjuntar?.addEventListener("click", () => {
+      const fi = document.getElementById("ticketFile");
+      if (fi) fi.click();  // esto dispara el mismo flujo que el botón normal
+      chatHistory.push({
+        role: "assistant",
+        content: "Perfecto 😊. Elige la foto de tu ticket y lo estoy escaneando…"
+      });
+      renderChat();
+    });
 
+    btnBotTomarFoto?.addEventListener("click", () => {
+      const btnCam = document.getElementById("btnAbrirCamara");
+      if (btnCam) btnCam.click();  // abre tu modal de cámara
+      chatHistory.push({
+        role: "assistant",
+        content: "Abriendo la cámara 📷. Toma la foto del ticket y yo leo los datos."
+      });
+      renderChat();
+    });
+
+    // Envío de mensajes al servidor del bot
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const text = input.value.trim();
@@ -335,23 +484,42 @@
       chatHistory.push({ role: "user", content: text });
       renderChat();
       input.value = "";
+      input.focus();
 
       try {
         const res = await fetch(API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: chatHistory }),
+          body: JSON.stringify({
+            messages: chatHistory
+          }),
         });
+
+        if (!res.ok) {
+          chatHistory.push({
+            role: "assistant",
+            content: "Ahora mismo no puedo conectar con el servidor del bot. Intenta de nuevo en unos momentos."
+          });
+          renderChat();
+          return;
+        }
 
         const data = await res.json();
         if (data.reply) {
           chatHistory.push(data.reply);
           renderChat();
+        } else {
+          chatHistory.push({
+            role: "assistant",
+            content: "No pude generar respuesta, pero puedes intentar volver a preguntarme."
+          });
+          renderChat();
         }
-      } catch {
+      } catch (err) {
+        console.error(err);
         chatHistory.push({
           role: "assistant",
-          content: "No me pude conectar. Intenta más tarde."
+          content: "Error de conexión con el servidor del bot."
         });
         renderChat();
       }
@@ -359,7 +527,7 @@
 
     function renderChat() {
       messagesDiv.innerHTML = "";
-      chatHistory.forEach(m => {
+      chatHistory.forEach((m) => {
         const el = document.createElement("div");
         el.className = "msg " + m.role;
         el.textContent = m.content;
@@ -368,6 +536,5 @@
       messagesDiv.scrollTop = messagesDiv.scrollHeight;
     }
   </script>
-
 </body>
 </html>
