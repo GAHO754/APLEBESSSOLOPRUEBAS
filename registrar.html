@@ -119,6 +119,22 @@
       color: #9ca3af;
     }
 
+    /* Botón de cerrar/minimizar dentro del header del bot */
+    #chatbot-close {
+      border: none;
+      background: transparent;
+      color: #9ca3af;
+      cursor: pointer;
+      font-size: 16px;
+      padding: 2px 6px;
+      border-radius: 9999px;
+      line-height: 1;
+    }
+    #chatbot-close:hover {
+      background: rgba(148,163,184,0.18);
+      color: #f9fafb;
+    }
+
     #chatbot-actions {
       padding: 8px 10px 4px;
       display: flex;
@@ -348,7 +364,6 @@
 
   <!-- Proxy IA (Firebase Functions Gen2) -->
   <script>
-    // Usa la que prefieras (Functions clásica o Cloud Run directa)
     window.OPENAI_PROXY_ENDPOINT = "https://ocr-3wbtuycfvq-uc.a.run.app";
   </script>
 
@@ -375,9 +390,9 @@
     👋 Hola, ¿quieres que te ayude a escanear tu ticket?
   </div>
 
-  <!-- Botón flotante con imagen NUEVA -->
+  <!-- Botón flotante con imagen -->
   <div id="chatbot-toggle">
-    <!-- Cambia "bot-nuevo.png" por el nombre real de tu imagen -->
+    <!-- Cambia "manzanas.png" por la imagen que quieras del bot -->
     <img src="manzanas.png" alt="Asistente de tickets">
   </div>
 
@@ -387,6 +402,8 @@
         Asistente de registro
         <br><span class="small">Escaneo y dudas de tickets</span>
       </div>
+      <!-- Botón de cerrar/minimizar -->
+      <button id="chatbot-close" type="button" aria-label="Cerrar asistente">✕</button>
     </div>
 
     <!-- Botones para que el BOT dispare el escaneo -->
@@ -407,7 +424,6 @@
   </div>
 
   <script>
-    // URL de tu bot en Render
     const API_URL = "https://bot-soporte-alejandro.onrender.com/chat";
 
     const toggle = document.getElementById("chatbot-toggle");
@@ -419,8 +435,8 @@
 
     const btnBotAdjuntar = document.getElementById("botAdjuntarTicket");
     const btnBotTomarFoto = document.getElementById("botTomarFoto");
+    const btnClose = document.getElementById("chatbot-close");
 
-    // Historial con mensaje inicial especial
     const chatHistory = [
       {
         role: "assistant",
@@ -433,31 +449,33 @@
     ];
     renderChat();
 
-    // Mostrar el globo después de 1.5s
     window.addEventListener('load', () => {
       setTimeout(() => {
         hint?.classList.add('show');
       }, 1500);
-      // ocultarlo automático después de 10s
       setTimeout(() => {
         if (hint) hint.classList.remove('show');
       }, 11000);
     });
 
-    // Abrir/cerrar bot
+    // Abrir/cerrar con el botón flotante
     toggle.onclick = () => {
       box.classList.toggle("hidden");
       if (!box.classList.contains("hidden")) {
         input.focus();
       }
-      // al abrir/cerrar, ocultamos el globito
       if (hint) hint.classList.remove('show');
     };
 
-    // Acciones del BOT que disparan tu OCR real
+    // Cerrar/minimizar con la "X" del header del bot
+    btnClose?.addEventListener("click", () => {
+      box.classList.add("hidden");
+    });
+
+    // Bot -> adjuntar ticket (dispara tu flujo real)
     btnBotAdjuntar?.addEventListener("click", () => {
       const fi = document.getElementById("ticketFile");
-      if (fi) fi.click();  // esto dispara el mismo flujo que el botón normal
+      if (fi) fi.click();
       chatHistory.push({
         role: "assistant",
         content: "Perfecto 😊. Elige la foto de tu ticket y lo estoy escaneando…"
@@ -465,9 +483,10 @@
       renderChat();
     });
 
+    // Bot -> tomar foto (abre tu modal de cámara)
     btnBotTomarFoto?.addEventListener("click", () => {
       const btnCam = document.getElementById("btnAbrirCamara");
-      if (btnCam) btnCam.click();  // abre tu modal de cámara
+      if (btnCam) btnCam.click();
       chatHistory.push({
         role: "assistant",
         content: "Abriendo la cámara 📷. Toma la foto del ticket y yo leo los datos."
@@ -475,7 +494,7 @@
       renderChat();
     });
 
-    // Envío de mensajes al servidor del bot
+    // Chat con tu servidor de bot
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const text = input.value.trim();
@@ -490,9 +509,7 @@
         const res = await fetch(API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            messages: chatHistory
-          }),
+          body: JSON.stringify({ messages: chatHistory }),
         });
 
         if (!res.ok) {
