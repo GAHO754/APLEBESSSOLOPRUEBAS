@@ -153,7 +153,7 @@
   }
 
   // =========================
-  //  Limpieza y correcciones OCR
+  //  Limpieza y correcciones OCR (parser local)
   // =========================
   function cleanOCR(raw) {
     let t = String(raw||'')
@@ -197,7 +197,7 @@
   }
 
   // =========================
-  //  PARSER PRECISO DE TICKET (formato Applebee's)
+  //  PARSER PRECISO DE TICKET (formato Applebee's) — LOCAL
   // =========================
   function parseTicketFromText(raw){
     // dinero: versión simple + versión global para matchAll
@@ -366,11 +366,43 @@
     };
   }
 
+  // ===== Merge IA (ocr.js) + parser local =====
+  function mergeParsed(iaRet, localParsed) {
+    iaRet = iaRet || {};
+    localParsed = localParsed || {};
+
+    const folio = iaRet.folio || localParsed.folio || "";
+    const fechaISO = iaRet.fecha || localParsed.fechaISO || "";
+
+    let total = null;
+    if (typeof iaRet.total === "number" && !Number.isNaN(iaRet.total)) {
+      total = iaRet.total;
+    } else if (typeof localParsed.total === "number" && !Number.isNaN(localParsed.total)) {
+      total = localParsed.total;
+    }
+
+    let productos = [];
+    if (Array.isArray(iaRet.items) && iaRet.items.length) {
+      productos = iaRet.items.map(it => ({
+        name: it.name || "",
+        qty: it.qty || 1,
+        price: typeof it.price === "number" ? it.price : null
+      }));
+    }
+    if (!productos.length && Array.isArray(localParsed.productos)) {
+      productos = localParsed.productos;
+    }
+
+    return { folio, fechaISO, total, productos };
+  }
+
   function applyParsedFields(parsed, fallbackItems){
     if (!parsed) return;
 
     // Folio: 5 dígitos
-    if (parsed.folio && /^\d{5}$/.test(parsed.folio) && iNum){
+    if (parsed.folio && /^\d{5,7}$/.test(parsed.folio) && iNum){
+      iNum.disabled = false;
+      iNum.readOnly = false;
       iNum.value = parsed.folio;
     }
 
@@ -379,6 +411,8 @@
       const parts = parsed.fechaISO.split('-');
       const dNum = parseInt(parts[2], 10);
       if (dNum >= 1 && dNum <= 31) {
+        iFecha.disabled = false;
+        iFecha.readOnly = false;
         iFecha.value = parsed.fechaISO;
       }
     }
@@ -386,6 +420,7 @@
     if (typeof parsed.total === 'number' && !Number.isNaN(parsed.total) && iTotal){
       iTotal.value = parsed.total.toFixed(2);
       iTotal.disabled = false;
+      iTotal.readOnly = false;
     }
 
     let prods = Array.isArray(parsed.productos) ? parsed.productos : [];
@@ -423,13 +458,20 @@
     try {
       setStatus("🕐 Escaneando ticket…");
       const ret = await window.processTicketWithIA(file);
-      const rawText = ret?.text || ret?.rawText || ret?.ocrText;
-      if (rawText){
-        const parsed = parseTicketFromText(rawText);
-        applyParsedFields(parsed, ret?.items);
-        setStatus("✅ Datos detectados automáticamente","ok");
+
+      const rawText = ret?.text || ret?.rawText || ret?.ocrText || "";
+      let localParsed = null;
+      if (rawText) {
+        localParsed = parseTicketFromText(rawText);
+      }
+
+      const merged = mergeParsed(ret, localParsed);
+      applyParsedFields(merged, merged.productos);
+
+      if (merged.folio || merged.fechaISO || merged.total || (merged.productos && merged.productos.length)) {
+        setStatus("✅ Datos detectados automáticamente. Revisa y presiona “Registrar Ticket”.", "ok");
       } else {
-        setStatus("No se pudo leer el ticket. Intenta otra foto.","err");
+        setStatus("No se pudo leer el ticket. Intenta otra foto.", "err");
       }
     } catch (e) {
       console.error("[autoProcess] Error al procesar:", e);
@@ -601,9 +643,9 @@
     const fechaStr=iFecha.value;
     const totalNum=parseFloat(iTotal.value||"0")||0;
 
-    if (!/^\d{5}$/.test(folio) || !fechaStr || !totalNum){
+    if (!/^\d{5,7}$/.test(folio) || !fechaStr || !totalNum){
       msgTicket.className='validacion-msg err';
-      msgTicket.textContent="Faltan datos válidos: folio (5 dígitos), fecha y total.";
+      msgTicket.textContent="Faltan datos válidos: folio, fecha y total.";
       return;
     }
 
