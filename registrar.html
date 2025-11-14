@@ -45,7 +45,7 @@
       bottom: 90px; 
       right: 20px;
       width: 320px; 
-      height: 420px;
+      height: 440px;
       background: rgba(15, 23, 42, 0.97);
       border: 1px solid rgba(148,163,184,0.4);
       border-radius: 18px;
@@ -73,10 +73,41 @@
       font-size: 11px;
       color: #9ca3af;
     }
+
+    #chatbot-actions {
+      padding: 8px 10px 4px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      border-bottom: 1px solid rgba(148,163,184,0.3);
+      background: rgba(15,23,42,.9);
+    }
+    .bot-action-btn {
+      flex: 1 1 48%;
+      border-radius: 9999px;
+      border: 1px solid rgba(148,163,184,0.6);
+      background: rgba(15,23,42,0.9);
+      color: #e5e7eb;
+      font-size: 11px;
+      padding: 4px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .bot-action-btn span.icon {
+      font-size: 14px;
+    }
+    .bot-action-btn:active {
+      transform: scale(0.97);
+    }
+
     #chatbot-messages {
       flex: 1;
       overflow-y: auto;
-      padding: 10px;
+      padding: 8px 10px;
       display: flex;
       flex-direction: column;
       gap: 6px;
@@ -268,9 +299,7 @@
 
   <!-- Proxy IA (Firebase Functions Gen2) -->
   <script>
-    // Usa la que prefieras (Functions clásica o Cloud Run directa)
     window.OPENAI_PROXY_ENDPOINT = "https://ocr-3wbtuycfvq-uc.a.run.app";
-    // window.OPENAI_PROXY_ENDPOINT = "https://us-central1-applebesapp.cloudfunctions.net/ocr";
   </script>
 
   <!-- Lógica tuya -->
@@ -296,9 +325,20 @@
     <div id="chatbot-header">
       <div>
         Asistente de registro
-        <br><span class="small">Tickets Applebee’s / puntos</span>
+        <br><span class="small">Escaneo y dudas de tickets</span>
       </div>
     </div>
+
+    <!-- Botones para que el BOT dispare el escaneo -->
+    <div id="chatbot-actions">
+      <button type="button" class="bot-action-btn" id="botAdjuntarTicket">
+        <span class="icon">📎</span><span>Adjuntar ticket</span>
+      </button>
+      <button type="button" class="bot-action-btn" id="botTomarFoto">
+        <span class="icon">📷</span><span>Tomar foto</span>
+      </button>
+    </div>
+
     <div id="chatbot-messages"></div>
     <form id="chatbot-form">
       <input id="chatbot-input" placeholder="Pregunta sobre tu ticket..." autocomplete="off" />
@@ -307,7 +347,7 @@
   </div>
 
   <script>
-    // PON AQUÍ la URL de tu bot en Render
+    // URL de tu bot en Render
     const API_URL = "https://bot-soporte-alejandro.onrender.com/chat";
 
     const toggle = document.getElementById("chatbot-toggle");
@@ -316,21 +356,24 @@
     const form = document.getElementById("chatbot-form");
     const input = document.getElementById("chatbot-input");
 
+    const btnBotAdjuntar = document.getElementById("botAdjuntarTicket");
+    const btnBotTomarFoto = document.getElementById("botTomarFoto");
+
     // Historial con contexto específico de tickets
     const chatHistory = [
       {
         role: "assistant",
         content:
-          "Hola 👋 soy tu asistente para registrar tu ticket de Applebee’s.\n" +
-          "Puedo ayudarte con:\n" +
-          "- Subir o tomar foto del ticket\n" +
-          "- Revisar número de ticket, fecha y total\n" +
-          "- Dudas sobre productos detectados y puntos\n\n" +
-          "Si tienes problemas, dime qué ves en la pantalla o en el ticket."
+          "Hola 👋 soy tu asistente para registrar tu ticket.\n\n" +
+          "1) Toca en 'Adjuntar ticket' o 'Tomar foto'.\n" +
+          "2) Yo escanearé el ticket y llenar\u00e9: número, fecha, productos y total.\n" +
+          "3) Solo revisa y presiona 'Registrar Ticket'.\n\n" +
+          "Si algo no se llena bien, dime qué dato falló y te ayudo."
       }
     ];
     renderChat();
 
+    // Abrir/cerrar bot
     toggle.onclick = () => {
       box.classList.toggle("hidden");
       if (!box.classList.contains("hidden")) {
@@ -338,6 +381,28 @@
       }
     };
 
+    // Acciones del BOT que disparan tu OCR real
+    btnBotAdjuntar?.addEventListener("click", () => {
+      const fi = document.getElementById("ticketFile");
+      if (fi) fi.click();  // esto dispara el mismo flujo que el botón normal
+      chatHistory.push({
+        role: "assistant",
+        content: "Perfecto 😊. Elige la foto de tu ticket y la estoy escaneando…"
+      });
+      renderChat();
+    });
+
+    btnBotTomarFoto?.addEventListener("click", () => {
+      const btnCam = document.getElementById("btnAbrirCamara");
+      if (btnCam) btnCam.click();  // abre tu modal de cámara
+      chatHistory.push({
+        role: "assistant",
+        content: "Abriendo la cámara 📷. Toma la foto del ticket y yo leo los datos."
+      });
+      renderChat();
+    });
+
+    // Envío de mensajes al servidor del bot
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const text = input.value.trim();
@@ -353,7 +418,6 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            // Mandamos el historial completo (el servidor ya tiene su system prompt)
             messages: chatHistory
           }),
         });
