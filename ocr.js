@@ -459,19 +459,33 @@ async function processTicketWithIA(file) {
     if (!items.length) items = localItems;
 
     // Sanitiza items
-    const finalItems = (items || []).map(it => {
-      const name = String(it.name || "").trim();
-      const qty = it.qty ? parseInt(it.qty, 10) || 1 : 1;
+        // Sanitiza items (menos filtros, confiamos más en la IA)
+    let finalItems = (items || []).map(it => {
+      const name  = String(it.name || "").trim();
+      const qty   = it.qty ? parseInt(it.qty, 10) || 1 : 1;
       const price = typeof it.price === "number" ? it.price : normalizeNum(it.price);
       return { name, qty, price };
     }).filter(it => {
       const n = String(it.name || "").toLowerCase();
       if (!n) return false;
+      // quitamos cosas claramente no producto (subtotal, iva, etc.)
       if (NOT_PRODUCT_RX.test(n)) return false;
-      if (CODEY_RX.test(n)) return false;
-      if (!looksLikeFoodOrDrink(n)) return false;
+      // ⚠️ YA NO filtramos por CODEY_RX ni looksLikeFoodOrDrink
+      // para no tirar combos raros (“Morita Mezcal”, “Te Shake”, etc.)
       return true;
     });
+
+    // Si la IA no dio nada útil, usamos los items locales
+    if (!finalItems.length && Array.isArray(localItems) && localItems.length) {
+      finalItems = localItems.map(it => ({
+        name: it.name,
+        qty:  it.qty || 1,
+        price: it.price
+      }));
+      dbgNote(`Items finales tomados del parser local: ${finalItems.length}`);
+    } else {
+      dbgNote(`Items finales tomados de la IA: ${finalItems.length}`);
+    }
 
     if (statusEl) {
       statusEl.className = "validacion-msg ok";
@@ -482,6 +496,7 @@ async function processTicketWithIA(file) {
 
     // devolvemos texto crudo + datos estimados para registrar.js
     return { text, folio, fecha, total, items: finalItems };
+
   } catch (e) {
     console.error(e);
     const statusEl2 = document.getElementById("ocrStatus");
